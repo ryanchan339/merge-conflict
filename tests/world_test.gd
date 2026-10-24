@@ -3,7 +3,7 @@ extends SceneTree
 ## Checks real collision geometry, rather than merely checking marker data.
 
 const OfficeScene = preload("res://scripts/office.gd")
-const REQUIRED_TARGETS: Array[String] = ["desk", "mentor", "manager", "standup", "kitchen", "intern", "exit"]
+const REQUIRED_TARGETS: Array[String] = ["desk", "mentor", "manager", "standup", "kitchen", "intern", "exit", "phone", "fridge", "drawer", "cup", "coffee_machine"]
 const CELL_SIZE: float = 0.5
 const REACH: float = 3.6
 var _failures: int = 0
@@ -46,7 +46,7 @@ func _run() -> void:
 				reachable[neighbor] = true
 				queue.append(neighbor)
 	_check(reachable.size() == free_cells.size(), "All %d sampled free cells connect to spawn (%d reachable)" % [free_cells.size(), reachable.size()])
-	_check(office.interaction_positions.size() == REQUIRED_TARGETS.size(), "Exactly seven office interaction targets are registered")
+	_check(office.interaction_positions.size() == REQUIRED_TARGETS.size(), "All %d office interaction targets are registered" % REQUIRED_TARGETS.size())
 	for id: String in REQUIRED_TARGETS:
 		if not office.interaction_positions.has(id):
 			_check(false, "Missing interaction marker: " + id)
@@ -73,6 +73,49 @@ func _run() -> void:
 					break
 				node = node.get_parent()
 		_check(valid_points > 0, "%s can be aimed at from %d reachable standing positions" % [id, valid_points])
+	var surface: MeshInstance3D = office.monitor_surface
+	_check(is_instance_valid(surface) and surface.mesh is QuadMesh, "Interactive monitor exposes a flat UV QuadMesh")
+	_check(surface.global_position.distance_to(Vector3(8.2, 1.34, 2.99)) < 0.01, "Monitor center matches the seated-camera contract")
+	_check(surface.global_transform.basis.z.normalized().dot(Vector3.BACK) > 0.99, "Monitor faces the seated player (+Z)")
+	_check((surface.mesh as QuadMesh).size.is_equal_approx(Vector2(1.45, 0.82)), "Monitor surface is 1.45 by 0.82 metres")
+	_check(office.toggle_fridge() and office.fridge_open, "Refrigerator opens")
+	_check(office.toggle_drawer() and office.drawer_open, "Desk drawer opens")
+	await create_timer(0.4).timeout
+	_check(office._fridge_hinge.rotation.y > deg_to_rad(100.0), "Refrigerator door completes its hinge animation")
+	_check(absf(office._drawer_slide.position.z - 3.95) < 0.01, "Drawer slides into the office to reveal its contents")
+	for id: String in ["fridge", "drawer", "cup", "coffee_machine"]:
+		var open_hits: int = 0
+		var marker: Vector3 = office.target_position(id)
+		for key: Variant in reachable:
+			var cell: Vector2i = key as Vector2i
+			var floor_position := Vector3(float(cell.x) * CELL_SIZE, 0.0, float(cell.y) * CELL_SIZE)
+			query.transform = Transform3D(Basis.IDENTITY, floor_position + Vector3.UP * 0.94)
+			if not space.intersect_shape(query, 1).is_empty():
+				continue
+			var camera: Vector3 = floor_position + Vector3.UP * 1.66
+			if camera.distance_to(marker) > REACH - 0.2:
+				continue
+			var ray := PhysicsRayQueryParameters3D.create(camera, camera + (marker - camera).normalized() * REACH)
+			var hit: Dictionary = space.intersect_ray(ray)
+			if not hit.is_empty() and str((hit["collider"] as Node).get_meta("interaction_id", "")) == id:
+				open_hits += 1
+		_check(open_hits > 0, "%s remains reachable with doors and drawer open (%d aiming spots)" % [id, open_hits])
+	office.set_cup_state("held")
+	await process_frame
+	_check(not office._cup_root.visible, "Held cup is removed from the counter")
+	office.set_cup_state("machine")
+	_check(office._cup_root.global_position.distance_to(Vector3(-11.99, 1.2, 4.7)) < 0.01, "Cup can be placed under the coffee spout")
+	office.set_coffee_brewing(true)
+	_check(office._coffee_stream.visible and office._steam_root.visible, "Brewing displays coffee and steam")
+	office.set_cup_state("filled")
+	_check(office._cup_contents.visible, "Filled cup displays coffee")
+	office.set_coffee_brewing(false)
+	office.set_phone_visible(false)
+	_check(not office._phone_root.visible, "Held phone disappears from the desk")
+	office.set_phone_visible(true)
+	_check(office._phone_root.visible, "Returned phone reappears on the desk")
+	_check(not office.toggle_fridge() and not office.fridge_open, "Refrigerator closes")
+	_check(not office.toggle_drawer() and not office.drawer_open, "Drawer closes")
 	print("WORLD TEST: %s" % ("PASS" if _failures == 0 else "%d failures" % _failures))
 	office.queue_free()
 	await process_frame
