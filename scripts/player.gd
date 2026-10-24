@@ -1,6 +1,7 @@
 extends CharacterBody3D
 
 signal interacted(id: String)
+signal use_held_item
 
 var camera: Camera3D
 var ray: RayCast3D
@@ -11,6 +12,7 @@ var focused_label: String = ""
 var walk_distance: float = 0.0
 var energy: int = 75
 var _step_timer: float = 0.0
+var camera_locked: bool = false
 
 func _ready() -> void:
 	name = "Player"
@@ -43,6 +45,13 @@ func _unhandled_input(event: InputEvent) -> void:
 		if not focused_id.is_empty():
 			interacted.emit(focused_id)
 		get_viewport().set_input_as_handled()
+	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+		if not focused_id.is_empty():
+			interacted.emit(focused_id)
+			get_viewport().set_input_as_handled()
+	if event is InputEventKey and event.pressed and not event.echo and event.physical_keycode == KEY_F:
+		use_held_item.emit()
+		get_viewport().set_input_as_handled()
 
 func _physics_process(delta: float) -> void:
 	if not is_on_floor():
@@ -58,7 +67,9 @@ func _physics_process(delta: float) -> void:
 	velocity.x = move_toward(velocity.x, direction.x * speed, 24.0 * delta)
 	velocity.z = move_toward(velocity.z, direction.z * speed, 24.0 * delta)
 	move_and_slide()
-	if direction.length_squared() > 0.1 and enabled:
+	if camera_locked:
+		pass
+	elif direction.length_squared() > 0.1 and enabled:
 		walk_distance += delta * speed
 		_step_timer += delta * speed * 1.8
 		camera.position.y = 1.66 + sin(_step_timer) * 0.025

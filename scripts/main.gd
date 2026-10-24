@@ -4,21 +4,23 @@ const OfficeScene = preload("res://scripts/office.gd")
 const PlayerController = preload("res://scripts/player.gd")
 const GameHUD = preload("res://scripts/hud.gd")
 const Story = preload("res://content/story.gd")
+const Workstation = preload("res://scripts/workstation.gd")
+const PocketPhone = preload("res://scripts/phone.gd")
 
 const STAGES: Array[String] = ["standup", "mentor", "feature", "review_info", "review", "intern", "manager", "kitchen", "incident", "exit"]
 const STAGE_TARGETS: Dictionary = {"standup":"standup", "mentor":"mentor", "feature":"desk", "review_info":"mentor", "review":"desk", "intern":"intern", "manager":"manager", "kitchen":"kitchen", "incident":"desk", "exit":"exit"}
 const TIMES: Array[String] = ["09:05", "09:30", "10:00", "11:15", "11:30", "13:00", "14:30", "15:15", "15:17", "17:00"]
 const OBJECTIVES: Dictionary = {
-	"standup":["Make your first standup", "Find the team huddle in the meeting area."],
-	"mentor":["Find out what you're actually building", "Ask Maya at her desk about the coffee-order feature."],
-	"feature":["Prompt your very confident AI assistant", "Return to your desk. Give the assistant a useful brief."],
-	"review_info":["Your review has a question", "Find Maya. Apparently “works on my machine” needs evidence."],
-	"review":["Finish the code review", "Return to your desk and decide how thoroughly to test."],
-	"intern":["Sam has a small emergency", "Visit the other intern. Their “quick question” has a stack trace."],
-	"manager":["Time for your 1:1", "Visit Jordan's office. Discuss the project and your progress."],
-	"kitchen":["Take a well-earned coffee break", "Head to the kitchenette. Choose how to spend your energy."],
-	"incident":["SEV-1 · Get back to your desk", "Coffee orders are duplicating. Sprint with Shift, then press E at your desk."],
-	"exit":["Your final day is in the books", "Head to the elevator for your internship evaluation."]
+	"standup":["Join standup", "Meeting area, back right."],
+	"mentor":["Ask Maya", "Clarify the Save button."],
+	"feature":["Build the feature", "Sit at your desk and use the computer."],
+	"review_info":["Check with Maya", "She left a review comment."],
+	"review":["Finish your review", "Open the task on your computer."],
+	"intern":["Check on Sam", "The other intern needs a hand."],
+	"manager":["Meet Jordan", "Your 1:1 is in the manager's office."],
+	"kitchen":["Make a coffee", "Take a cup. Brew. Drink."],
+	"incident":["Get to your desk", "Shift to run. Coffee checkout is down."],
+	"exit":["Head home", "Your evaluation is at the elevator."]
 }
 
 var office: Node3D
@@ -42,6 +44,21 @@ var incident_reached: bool = false
 var sound: AudioStreamPlayer
 var capture_mode: bool = false
 var test_mode: bool = false
+var computer: Node
+var phone: CanvasLayer
+var seated: bool = false
+var seating: bool = false
+var camera_tween: Tween
+var decision_open: bool = false
+var card_on_computer: bool = false
+var cup_state: String = "none"
+var held_cup: Node3D
+var held_liquid: MeshInstance3D
+var coffee_brewing: bool = false
+var coffee_drank: bool = false
+var coffee_boosted: bool = false
+var phone_scrolls: int = 0
+var phone_minutes: int = 0
 
 func _ready() -> void:
 	capture_mode = "--capture" in OS.get_cmdline_user_args()
@@ -52,6 +69,7 @@ func _ready() -> void:
 	add_child(player)
 	player.position = office.spawn_position
 	player.interacted.connect(_interact)
+	player.use_held_item.connect(_drink_coffee)
 	hud = GameHUD.new()
 	add_child(hud)
 	hud.choice_selected.connect(_choose)
@@ -59,6 +77,19 @@ func _ready() -> void:
 	hud.resume_pressed.connect(_resume)
 	hud.restart_pressed.connect(_restart)
 	hud.quit_pressed.connect(_quit)
+	computer = Workstation.new()
+	add_child(computer)
+	computer.setup(office.monitor_surface, player.camera)
+	computer.choice_selected.connect(_choose)
+	computer.continue_pressed.connect(_continue)
+	computer.close_requested.connect(_stand_up)
+	computer.phone_requested.connect(_open_phone)
+	computer.task_requested.connect(_desk_work)
+	phone = PocketPhone.new()
+	add_child(phone)
+	phone.closed.connect(_phone_closed)
+	phone.scrolled.connect(_phone_scrolled)
+	_build_held_cup()
 	sound = AudioStreamPlayer.new()
 	add_child(sound)
 	_update_hud()
@@ -71,7 +102,10 @@ func _ready() -> void:
 func _process(delta: float) -> void:
 	if not is_instance_valid(hud) or not is_instance_valid(player):
 		return
-	hud.set_focus(player.focused_label if player.enabled else "")
+	var focus_text: String = player.focused_label if player.enabled else ""
+	if player.enabled and focus_text.is_empty() and cup_state == "held_full":
+		focus_text = "F  ·  Drink coffee"
+	hud.set_focus(focus_text)
 	if stage_index >= 0:
 		var target_id: String = str(STAGE_TARGETS[STAGES[stage_index]])
 		var target: Vector3 = office.target_position(target_id)
@@ -82,7 +116,7 @@ func _process(delta: float) -> void:
 		hud.minimap.target_id = target_id
 		hud.minimap.target_text = office.target_label(target_id).to_upper()
 		hud.minimap.queue_redraw()
-	if incident_active and not paused and player.enabled:
+	if incident_active and not paused and not hud.is_modal_open():
 		incident_seconds = maxf(0, incident_seconds - delta)
 		hud.set_incident(incident_seconds, true)
 		if incident_seconds <= 0:
@@ -91,7 +125,24 @@ func _process(delta: float) -> void:
 			stats.trust = maxi(0, int(stats.trust) - 10)
 			flags["late_incident"] = true
 			_update_hud()
-			_open_custom({"eyebrow":"ON-CALL UPDATE", "title":"Maya bought you some time.", "speaker":"#incident-coffee", "body":"The timer ran out, so Maya disabled new coffee orders. Nobody is paying twice anymore, but the office is now aggressively decaffeinated.\n\nYou can still resolve the incident. Get to your desk and choose a fix. [b]−10 team trust[/b]", "choices":[{"label":"Get to the desk and fix it", "hint":"The day is recoverable.", "effects":{}, "feedback":"", "next":""}]}, true)
+			if phone.is_open():
+				phone.close_phone()
+			hud.toast("Maya paused orders. −10 trust. Get to your desk.")
+
+func _input(event: InputEvent) -> void:
+	if not is_instance_valid(phone):
+		return
+	if phone.is_open():
+		if event is InputEventKey and event.pressed and not event.echo and event.physical_keycode == KEY_ESCAPE:
+			phone.close_phone()
+			get_viewport().set_input_as_handled()
+		return
+	if seated and not hud.is_modal_open():
+		if event is InputEventKey and event.pressed and not event.echo and event.physical_keycode == KEY_ESCAPE:
+			_stand_up()
+			get_viewport().set_input_as_handled()
+		elif not seating and computer.forward_input(event):
+			get_viewport().set_input_as_handled()
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.echo:
@@ -100,21 +151,36 @@ func _unhandled_input(event: InputEvent) -> void:
 				return
 			if paused:
 				_resume()
-			elif not hud.is_modal_open():
+			elif not hud.is_modal_open() and not seated and not phone.is_open():
 				paused = true
 				player.set_active(false)
 				hud.show_pause()
 			get_viewport().set_input_as_handled()
 
 func _interact(id: String) -> void:
-	if hud.is_modal_open() or finished or stage_index < 0:
+	if hud.is_modal_open() or finished or stage_index < 0 or seated:
+		return
+	if id == "desk":
+		_sit_down()
+		return
+	if id == "phone":
+		_sit_down(true)
+		return
+	if id in ["fridge", "drawer", "cup", "coffee_machine"]:
+		_use_kitchen_object(id)
 		return
 	var stage: String = STAGES[stage_index]
+	if id == "kitchen" and stage == "kitchen":
+		if coffee_drank:
+			_open_card("kitchen")
+		else:
+			hud.toast("Grab a cup, use the machine, then F to drink.")
+		return
 	if id == str(STAGE_TARGETS[stage]):
 		if stage == "exit":
 			_finish_day()
 		elif stage == "review_info":
-			_open_custom({"eyebrow":"CODE REVIEW · CR-012", "title":"One tap. Zero purchases?", "speaker":"Maya · senior engineer", "body":"“The AI wrote a wonderfully confident explanation. I would now like it to write a wonderfully correct feature.”\n\nMaya points to a requirement: [b]Save must never place an order or charge money. Guests must sign in. Repeated taps should still save only one favorite.[/b]\n\n“Test a signed-in person, a guest, and someone tapping twice. We save favorites here, not surprise purchases.”", "choices":[{"label":"Got it. One favorite, no payment—even on a double tap.", "hint":"Take Maya's review notes back to your desk.", "effects":{"review_context":true}, "feedback":"Maya adds a test checklist to your ticket. It is shorter than the AI's explanation by approximately eleven paragraphs.", "next":""}]})
+			_open_custom({"title":"One tap. Zero purchases.", "speaker":"Maya", "body":"“Save should remember a drink, never buy it. Check guests and double taps before you ship.”", "choices":[{"label":"I'll check all three cases.", "hint":"", "effects":{"review_context":true}, "feedback":"Maya sends the checklist to your computer.", "next":""}]})
 		else:
 			if stage == "incident":
 				incident_active = false
@@ -122,17 +188,8 @@ func _interact(id: String) -> void:
 				hud.set_incident(incident_seconds, false)
 			_open_card(stage)
 		return
-	var chatter: Dictionary = {
-		"desk":["Your desk", "Your AI assistant is displaying [b]“Thinking…”[/b]. It has been thinking about lunch for seven minutes.\n\nFollow the current objective first; the desk will still be here."],
-		"mentor":["Maya · senior engineer", "“A good question usually saves more time than a very confident guess. Anyway, what are you working on?”\n\nMaya gestures toward your current task."],
-		"manager":["Jordan · engineering manager", "“My door is always open. Except when it's closed, which is most of the time because we have an open-door strategy meeting.”\n\nYour scheduled 1:1 is on the day's agenda."],
-		"standup":["The team huddle", "A whiteboard says [b]THIS MEETING COULD HAVE BEEN A MESSAGE[/b]. Someone has scheduled a meeting to discuss the whiteboard."],
-		"kitchen":["The kitchenette", "The coffee machine is labeled [b]CRITICAL INFRASTRUCTURE[/b]. The toaster has requested a promotion."],
-		"intern":["Sam · fellow intern", "“I have seventeen tabs open and I think at least one of them is documentation.”\n\nSam waves encouragingly. You should probably finish your current task."],
-		"exit":["The elevator", "Your badge works. Your internship is still in progress.\n\nFinish the current objective before heading home."]
-	}
-	var lines: Array = chatter.get(id, ["Office", "There is probably a meeting about this."])
-	_open_custom({"eyebrow":"AROUND THE OFFICE", "title":lines[0], "speaker":"SMALL BATCH · FLOOR 04", "body":lines[1], "choices":[{"label":"Back to it", "hint":"Follow the objective and the teal dot on the floor map.", "effects":{}, "feedback":"", "next":""}]}, true)
+	var chatter: Dictionary = {"mentor":"Maya: “Clear questions. Small changes. More coffee.”", "manager":"Jordan: “Let's catch up at your 1:1.”", "standup":"This meeting could have been a message.", "kitchen":"A perfectly normal dependency on coffee.", "intern":"Sam: “Seventeen tabs. One might be documentation.”", "exit":"Finish your task before heading home."}
+	hud.toast(str(chatter.get(id, "Back to it.")))
 
 func _open_card(id: String) -> void:
 	current_card_id = id
@@ -140,8 +197,13 @@ func _open_card(id: String) -> void:
 	ambient = false
 	pending_next = ""
 	pending_advance = false
+	decision_open = true
+	card_on_computer = seated and id in ["feature", "review", "incident"]
 	player.set_active(false)
-	hud.show_card(current_card)
+	if card_on_computer:
+		computer.show_card(current_card)
+	else:
+		hud.show_card(current_card)
 	_play_tone(520.0, 0.055, 0.07)
 
 func _open_custom(card: Dictionary, is_ambient: bool = false) -> void:
@@ -150,14 +212,19 @@ func _open_custom(card: Dictionary, is_ambient: bool = false) -> void:
 	ambient = is_ambient
 	pending_next = ""
 	pending_advance = false
+	decision_open = true
+	card_on_computer = false
 	player.set_active(false)
 	hud.show_card(card)
 
 func _choose(index: int) -> void:
+	if not decision_open:
+		return
 	var choices: Array = current_card.get("choices", [])
 	if index < 0 or index >= choices.size():
 		return
 	var choice: Dictionary = choices[index]
+	decision_open = false
 	if current_card_id == "welcome":
 		hud.hide_modal()
 		_set_stage(0)
@@ -178,14 +245,10 @@ func _choose(index: int) -> void:
 	if feedback.is_empty():
 		_continue()
 	else:
-		var changes: PackedStringArray = []
-		for key: String in ["delivery", "quality", "trust", "energy"]:
-			if effects.has(key) and int(effects[key]) != 0:
-				var value: int = int(effects[key])
-				changes.append(("+" if value > 0 else "") + str(value) + " " + key.capitalize())
-		if not changes.is_empty():
-			feedback += "\n\n[color=#087f81]" + "   ·   ".join(changes) + "[/color]"
-		hud.show_feedback(feedback)
+		if card_on_computer:
+			computer.show_feedback(feedback)
+		else:
+			hud.show_feedback(feedback)
 		_play_tone(650.0, 0.06, 0.06)
 
 func _continue() -> void:
@@ -198,7 +261,11 @@ func _continue() -> void:
 	if pending_advance:
 		pending_advance = false
 		_set_stage(stage_index + 1)
-	player.set_active(not finished)
+	if seated:
+		computer.show_desktop(str(OBJECTIVES[STAGES[stage_index]][0]))
+		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+	else:
+		player.set_active(not finished)
 
 func _set_stage(index: int) -> void:
 	stage_index = clampi(index, 0, STAGES.size()-1)
@@ -217,12 +284,18 @@ func _update_hud() -> void:
 	player.energy = int(stats.energy)
 	if stage_index < 0:
 		hud.set_status(stats, "09:00", "FINAL DAY · CLOCKING IN")
-		hud.set_objective("Welcome to Small Batch", "Your badge says intern. Your calendar says otherwise.")
+		hud.set_objective("Your final day", "")
 	else:
 		var stage: String = STAGES[stage_index]
 		var objective: Array = OBJECTIVES[stage]
-		hud.set_status(stats, TIMES[stage_index], "FINAL DAY · " + str(stage_index+1).pad_zeros(2) + "/10")
+		var base_parts: PackedStringArray = TIMES[stage_index].split(":")
+		var minutes: int = mini(1439, int(base_parts[0]) * 60 + int(base_parts[1]) + phone_minutes)
+		var clock_text: String = "%02d:%02d" % [minutes / 60, minutes % 60]
+		hud.set_status(stats, clock_text, "FINAL DAY")
 		var detail: String = str(objective[1])
+		if stage == "kitchen":
+			var coffee_steps: Dictionary = {"none":"Take a cup from the counter.", "held":"Use the coffee machine.", "machine":"Let it brew.", "filled":"Pick up your coffee.", "held_full":"F to drink."}
+			detail = str(coffee_steps.get(cup_state, "Take a break."))
 		if stage == "incident" and int(stats.energy) < 25:
 			detail += " Low energy: your sprint is slower."
 		hud.set_objective(str(objective[0]), detail)
@@ -234,10 +307,218 @@ func _finish_day() -> void:
 	hud.set_incident(0, false)
 	var result: Dictionary = Story.ending(stats, flags)
 	hud.show_ending(result, stats, evidence)
-	var file := FileAccess.open("user://last_evaluation.json", FileAccess.WRITE)
-	if file != null:
-		file.store_string(JSON.stringify({"stats":stats, "flags":flags, "result":result, "evidence":evidence}, "\t"))
+	if not capture_mode and not test_mode:
+		var file := FileAccess.open("user://last_evaluation.json", FileAccess.WRITE)
+		if file != null:
+			file.store_string(JSON.stringify({"stats":stats, "flags":flags, "result":result, "evidence":evidence}, "\t"))
 	_play_tone(780.0, 0.22, 0.07)
+
+func _sit_down(pick_up_phone: bool = false) -> void:
+	if seated or finished:
+		return
+	seated = true
+	seating = true
+	player.set_active(false)
+	player.camera_locked = true
+	held_cup.visible = false
+	hud.set_seated(true)
+	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+	var target: Transform3D = Transform3D(Basis.IDENTITY, office.seat_eye).looking_at(office.seat_look, Vector3.UP)
+	if is_instance_valid(camera_tween):
+		camera_tween.kill()
+	camera_tween = create_tween().set_parallel(true)
+	camera_tween.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
+	camera_tween.tween_property(player.camera, "global_transform", target, 0.42)
+	camera_tween.tween_property(player.camera, "fov", 53.0, 0.42)
+	camera_tween.finished.connect(func() -> void:
+		if not seated:
+			return
+		seating = false
+		computer.set_active(true)
+		if pick_up_phone:
+			computer.show_desktop(str(OBJECTIVES[STAGES[stage_index]][0]))
+			_open_phone()
+		else:
+			_desk_work()
+	, CONNECT_ONE_SHOT)
+
+func _stand_up() -> void:
+	if not seated:
+		return
+	if pending_advance:
+		_continue()
+	if phone.is_open():
+		phone.close_phone()
+	if is_instance_valid(camera_tween):
+		camera_tween.kill()
+	seated = false
+	seating = false
+	decision_open = false
+	card_on_computer = false
+	computer.set_active(false)
+	computer.show_desktop(str(OBJECTIVES[STAGES[stage_index]][0]))
+	player.global_position = office.stand_position
+	player.rotation = Vector3.ZERO
+	player.camera.position = Vector3(0, 1.66, 0)
+	player.camera.rotation = Vector3.ZERO
+	player.camera.fov = 78.0
+	player.camera_locked = false
+	held_cup.visible = cup_state in ["held", "held_full"]
+	hud.set_seated(false)
+	player.set_active(true)
+
+func _desk_work() -> void:
+	if not seated or seating or phone.is_open():
+		return
+	if pending_advance:
+		_continue()
+		return
+	var stage: String = STAGES[stage_index]
+	if stage in ["feature", "review", "incident"]:
+		if stage == "incident":
+			incident_active = false
+			incident_reached = true
+			hud.set_incident(0, false)
+		_open_card(stage)
+	else:
+		decision_open = false
+		computer.show_desktop(str(OBJECTIVES[stage][0]))
+
+func _open_phone() -> void:
+	if not seated or seating or phone.is_open():
+		return
+	computer.set_active(false)
+	office.set_phone_visible(false)
+	phone.open_phone()
+
+func _phone_closed() -> void:
+	office.set_phone_visible(true)
+	if seated:
+		computer.set_active(true)
+		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+	else:
+		player.set_active(not finished and not hud.is_modal_open())
+
+func _phone_scrolled(count: int) -> void:
+	phone_scrolls += count
+	phone_minutes += count * 2
+	if phone_scrolls % 5 == 0:
+		stats.delivery = maxi(0, int(stats.delivery) - 2)
+		hud.toast("Ten minutes vanished. The algorithm thanks you.")
+	_update_hud()
+
+func _use_kitchen_object(id: String) -> void:
+	match id:
+		"fridge":
+			var opened: bool = office.toggle_fridge()
+			hud.toast("Cold water. Suspiciously old lunch." if opened else "Fridge closed.")
+		"drawer":
+			var opened: bool = office.toggle_drawer()
+			hud.toast("Spare cups. No spare deadlines." if opened else "Drawer closed.")
+		"cup":
+			if cup_state == "none":
+				cup_state = "held"
+				office.set_cup_state("held")
+				held_cup.visible = true
+				held_liquid.visible = false
+				hud.toast("Cup acquired. Find the coffee machine.")
+			elif cup_state == "filled":
+				_take_coffee()
+			elif cup_state in ["held", "held_full"]:
+				hud.toast("Already holding a cup.")
+		"coffee_machine":
+			if coffee_brewing:
+				hud.toast("Brewing…")
+			elif cup_state == "filled":
+				_take_coffee()
+			elif cup_state == "held":
+				_start_brewing()
+			elif cup_state == "held_full":
+				hud.toast("F to drink your coffee.")
+			else:
+				hud.toast("Take a cup from the counter first.")
+	_update_hud()
+
+func _take_coffee() -> void:
+	cup_state = "held_full"
+	office.set_cup_state("held")
+	held_cup.visible = true
+	held_liquid.visible = true
+	hud.toast("Coffee ready. F to drink.")
+	_update_hud()
+
+func _start_brewing() -> void:
+	coffee_brewing = true
+	cup_state = "machine"
+	held_cup.visible = false
+	office.set_cup_state("machine")
+	office.set_coffee_brewing(true)
+	hud.toast("Brewing…")
+	_update_hud()
+	await get_tree().create_timer(2.8).timeout
+	if not is_inside_tree():
+		return
+	coffee_brewing = false
+	cup_state = "filled"
+	office.set_cup_state("filled")
+	office.set_coffee_brewing(false)
+	hud.toast("Ready. Pick up your coffee.")
+	_update_hud()
+	_play_tone(720.0, 0.07, 0.05)
+
+func _drink_coffee() -> void:
+	if cup_state != "held_full" or hud.is_modal_open() or seated:
+		return
+	cup_state = "none"
+	coffee_drank = true
+	held_cup.visible = false
+	office.set_cup_state("counter")
+	if not coffee_boosted:
+		stats.energy = mini(100, int(stats.energy) + 12)
+		coffee_boosted = true
+	_update_hud()
+	hud.toast("Human infrastructure restored.")
+	if STAGES[stage_index] == "kitchen":
+		_open_card("kitchen")
+
+func _build_held_cup() -> void:
+	held_cup = Node3D.new()
+	held_cup.name = "Held coffee cup"
+	player.camera.add_child(held_cup)
+	held_cup.position = Vector3(0.35, -0.35, -0.62)
+	held_cup.rotation_degrees = Vector3(0, -15, -8)
+	var ceramic := StandardMaterial3D.new()
+	ceramic.albedo_color = Color("ed9c7d")
+	ceramic.roughness = 0.55
+	var mesh := MeshInstance3D.new()
+	var cylinder := CylinderMesh.new()
+	cylinder.top_radius = 0.085
+	cylinder.bottom_radius = 0.07
+	cylinder.height = 0.18
+	mesh.mesh = cylinder
+	mesh.material_override = ceramic
+	held_cup.add_child(mesh)
+	var handle := MeshInstance3D.new()
+	var ring := TorusMesh.new()
+	ring.inner_radius = 0.035
+	ring.outer_radius = 0.06
+	handle.mesh = ring
+	handle.material_override = ceramic
+	handle.position.x = 0.09
+	handle.rotation_degrees.x = 90
+	held_cup.add_child(handle)
+	held_liquid = MeshInstance3D.new()
+	var surface := CylinderMesh.new()
+	surface.top_radius = 0.07
+	surface.bottom_radius = 0.07
+	surface.height = 0.006
+	var coffee := StandardMaterial3D.new()
+	coffee.albedo_color = Color("453127")
+	held_liquid.mesh = surface
+	held_liquid.material_override = coffee
+	held_liquid.position.y = 0.086
+	held_cup.add_child(held_liquid)
+	held_cup.visible = false
 
 func _resume() -> void:
 	paused = false
@@ -283,21 +564,53 @@ func _capture_sequence() -> void:
 	await get_tree().process_frame
 	await get_tree().create_timer(1).timeout
 	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path("res://artifacts"))
+	var ignore_file := FileAccess.open("res://artifacts/.gdignore", FileAccess.WRITE)
+	if ignore_file != null:
+		ignore_file.close()
 	await _save_capture("01-welcome")
 	_choose(0)
 	player.rotation.y = 0.0
 	await get_tree().create_timer(0.3).timeout
 	await _save_capture("02-office")
-	_open_card("feature")
-	await _save_capture("03-feature")
-	hud.hide_modal()
+	_set_stage(2)
+	_sit_down()
+	await get_tree().create_timer(0.6).timeout
+	await _save_capture("03-computer")
+	_choose(1)
+	await _save_capture("04-computer-feedback")
+	_continue()
+	_open_phone()
+	await get_tree().create_timer(0.4).timeout
+	await _save_capture("05-phone")
+	phone.close_phone()
+	_stand_up()
+	_set_stage(7)
 	player.set_active(false)
-	_set_stage(8)
-	await _save_capture("04-incident")
+	var fridge_target: Vector3 = office.target_position("fridge")
+	player.position = Vector3(fridge_target.x + 2.2, 0, fridge_target.z - 1.4)
+	player.camera.look_at(fridge_target)
+	office.toggle_fridge()
+	office.toggle_drawer()
+	await get_tree().create_timer(0.5).timeout
+	await _save_capture("06-kitchen")
+	_use_kitchen_object("cup")
+	_use_kitchen_object("coffee_machine")
+	var machine_target: Vector3 = office.target_position("coffee_machine")
+	player.position = Vector3(machine_target.x + 2.1, 0, machine_target.z + 1.4)
+	player.camera.look_at(machine_target)
+	await get_tree().create_timer(0.8).timeout
+	await _save_capture("07-coffee")
+	await get_tree().create_timer(1.8).timeout
+	_use_kitchen_object("cup")
+	_drink_coffee()
+	_choose(0)
+	_continue()
+	await _save_capture("08-pager")
+	_set_stage(9)
 	stats = {"delivery":80, "quality":85, "trust":85, "energy":65}
 	flags = {"clarified":true,"tested":true}
 	_finish_day()
-	await _save_capture("05-evaluation")
+	await _save_capture("09-evaluation")
 	get_tree().quit()
 
 func _save_capture(filename: String) -> void:
@@ -316,9 +629,18 @@ func _smoke_test() -> void:
 	for step: int in STAGES.size() - 1:
 		var stage: String = STAGES[stage_index]
 		var target_id: String = str(STAGE_TARGETS[stage])
-		_interact(target_id)
+		if stage == "kitchen":
+			_interact("cup")
+			_interact("coffee_machine")
+			await get_tree().create_timer(2.9).timeout
+			_interact("coffee_machine")
+			_drink_coffee()
+		else:
+			_interact(target_id)
+		if seating:
+			await get_tree().create_timer(0.5).timeout
 		var guard: int = 0
-		while hud.is_modal_open() and guard < 8:
+		while (hud.is_modal_open() or decision_open or pending_advance) and guard < 8:
 			if not pending_next.is_empty() or pending_advance:
 				_continue()
 			else:
@@ -328,6 +650,8 @@ func _smoke_test() -> void:
 					break
 				_choose(0)
 			guard += 1
+		if seated:
+			_stand_up()
 		if stage_index != step+1:
 			failures.append("Stage progression failed: " + stage)
 	_interact("exit")
