@@ -19,12 +19,19 @@ To edit the game, import `project.godot` into Godot, or run:
 | WASD / arrow keys | Walk |
 | Mouse | Look |
 | Shift | Sprint |
-| E | Interact with the person or workstation under the crosshair |
+| E / left click | Interact with the object under the crosshair |
+| Mouse click while seated | Use buttons on the actual computer monitor |
+| F | Drink a held coffee |
+| Wheel / up and down / drag | Scroll Loop on your phone |
 | Click / 1, 2, 3 | Choose a dialogue response |
 | Enter | Continue after feedback |
-| Escape | Pause, resume, restart, or quit |
+| Escape | Put down the phone, stand up from the desk, or pause while walking |
 
-Follow the objective at the lower left and the teal destination on the floor map. Move close enough to a person or desk and look at them; the interaction prompt appears when they are within reach. During dialogue, the mouse is free for clicking. It returns to camera control when the dialogue closes.
+Follow the single objective at the upper left. Approach a person or object and look at it to see its action. There is no permanent controls bar or score dashboard; scores are in the pause menu and evaluation. Dialogue is short, and instructions appear as needed.
+
+At your desk, interact with the chair or workstation to sit down. Click choices directly on the 3D monitor. The screen's **Loop** button picks up your phone; you can also approach the physical phone on the desk. Scroll the fictional short-video feed, like a clip, and put it down to return to work. Every five posts costs ten game minutes and two delivery points.
+
+In the kitchenette, open the refrigerator and slide out the drawer. Take a cup from the counter or open drawer, put it under the coffee machine, wait for it to brew, pick it up, and press **F** to drink. The first coffee restores 12 energy. The objective tracks your next step.
 
 ## The prototype
 
@@ -32,11 +39,11 @@ One compressed **final internship day**, taking roughly 10–15 minutes dependin
 
 1. Give your standup update.
 2. Walk to Maya's desk and clarify an ambiguous feature.
-3. Return to your workstation and choose an instruction for BatchGPT.
+3. Sit at your workstation and click an instruction for BatchGPT on the monitor.
 4. Ask Maya about review feedback, then decide how thoroughly to test.
 5. Help Sam, or protect your own deadline.
 6. Meet Jordan for your 1:1: own a mistake and choose project scope.
-7. Take a break, work late, or pursue beverage-based productivity.
+7. Make a coffee, then decide whether to rest or work late.
 8. Respond to a severity page: sprint to your desk and solve an accessible incident puzzle.
 9. Head to the elevator for your evaluation.
 
@@ -53,8 +60,10 @@ The AI assistant is authored satire with predefined outcomes. There is no live m
 | `scripts/main.gd` | Workday progression, interactions, consequences, pager, evaluation |
 | `scripts/office.gd` | Procedural office geometry, furniture, coworkers, targets |
 | `scripts/player.gd` | First-person movement, camera, collision, interaction ray |
-| `scripts/hud.gd` | Status, dialogue, choices, pause, evaluation |
-| `scripts/office_map.gd` | Floor map and destination |
+| `scripts/hud.gd` | Minimal objectives, compact dialogue, pause, evaluation |
+| `scripts/workstation.gd` | Interactive desktop rendered onto the physical monitor |
+| `scripts/phone.gd` | Loop, a local animated short-video feed |
+| `scripts/office_map.gd` | Optional floor-map component, hidden in the minimal HUD |
 | `content/story.gd` | Editable dialogue, choices, effects, offer rules |
 
 All art is built from simple geometry and materials; no external asset pack is required. The renderer uses OpenGL Compatibility with 4× MSAA.
@@ -65,7 +74,7 @@ All art is built from simple geometry and materials; no external asset pack is r
 powershell -NoProfile -ExecutionPolicy Bypass -File tools\test.ps1
 ```
 
-The checks cover importing the project, complete workday progression, decision paths and ending boundaries, connected walkable floor space, interaction visibility, and keyboard input.
+The checks cover importing the project, complete workday progression, decision paths and ending boundaries, connected walkable floor space, physical monitor clicks, seating, phone scrolling, coffee preparation, and keyboard input.
 
 To capture the actual rendered game screens into the ignored `artifacts` folder:
 
