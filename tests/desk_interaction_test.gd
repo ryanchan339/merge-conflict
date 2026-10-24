@@ -22,6 +22,8 @@ func _run() -> void:
 	_check(game.stage_index == 0 and game.player.enabled, "Real numeric input clocks in")
 	_check(not _contains_old_instructions(game.hud), "Walking HUD omits the old decision footer and global control instructions")
 	_check(not game.hud.minimap.visible, "The old always-on minimap is hidden")
+	_check(game.hud._stats_panel.is_visible_in_tree(), "All four meter values remain visible while walking")
+	_check(game.hud._root.theme.default_font.resource_path == "res://assets/fonts/Inter.ttf", "The HUD uses the bundled OFL font")
 
 	# Only the assignment is arranged directly; seating and task completion use real input.
 	game._set_stage(2)
@@ -38,6 +40,8 @@ func _run() -> void:
 	var aim: Vector3 = (game.office.monitor_surface.global_position - game.player.camera.global_position).normalized()
 	_check((-game.player.camera.global_basis.z).dot(aim) > 0.999, "Seated camera looks at the center of the actual monitor")
 	_check(not game.hud._objective.visible and not game.hud._clock.visible, "Seating hides the walking HUD")
+	_check(game.hud._stats_panel.is_visible_in_tree(), "Seating keeps the four meter values visible")
+	_check(game.computer._root.theme.default_font.resource_path == "res://assets/fonts/Inter.ttf", "The physical desktop uses the bundled font")
 	_check(game.computer.is_card_open() and game.current_card_id == "feature", "Feature appears inside the monitor")
 
 	var before: Dictionary = game.stats.duplicate(true)
@@ -56,7 +60,7 @@ func _run() -> void:
 	_check(int(game.stats.energy) == int(before.energy) - 6, "Prompt click applies energy exactly once")
 	_check(game.evidence.size() == 1 and not game.decision_open and game.pending_advance, "One click submits one decision and opens feedback")
 	var applied: Dictionary = game.stats.duplicate(true)
-	var next: Button = _find_button(game.computer._window, "Continue  →")
+	var next: Button = _find_button(game.computer._window, "Continue working.")
 	_check(is_instance_valid(next), "Feedback has a real Continue button on the screen")
 	if not is_instance_valid(next):
 		_finish()
@@ -64,7 +68,7 @@ func _run() -> void:
 	await _click_monitor_button(next)
 	_check(game.stage_index == 3 and not game.computer.is_card_open(), "Physical Continue click advances to the review conversation")
 	_check(game.stats == applied and game.evidence.size() == 1, "Continuing preserves the single application of effects")
-	var stand: Button = _find_button(game.computer._root, "Stand up  ↗")
+	var stand: Button = _find_button(game.computer._root, "Stand up from my desk.")
 	await _click_monitor_button(stand)
 	_check(not game.seated and game.player.enabled and not game.computer.active, "Physical Stand up button restores walking")
 	_check(game.player.global_position.distance_to(game.office.stand_position) < 0.1, "Standing returns the body to a clear floor position")
@@ -86,6 +90,7 @@ func _run() -> void:
 	await create_timer(0.55).timeout
 	_check(game.seated and game.phone.is_open(), "E picks up the phone and opens its screen")
 	_check(not game.office._phone_root.visible, "Picking up the phone hides its desk prop")
+	_check(game.hud._stats_panel.is_visible_in_tree() and game.hud._stats_layer.layer > game.phone.layer, "The four meter values stay above the open phone")
 	var original_post: int = game.phone._post_index
 	var original_minutes: int = game.phone_minutes
 	await _tap(KEY_DOWN)
@@ -104,6 +109,23 @@ func _run() -> void:
 	await _tap(KEY_ESCAPE)
 	_check(not game.phone.is_open() and game.office._phone_root.visible, "Escape puts the phone back on the desk")
 	_check(game.seated and game.computer.active, "Closing the phone returns input to the seated computer")
+	game.hud.set_conversation(true)
+	game.hud.show_card({"title":"Let's discuss the feature.", "body":"Maya asks what you learned.", "choices":[{"label":"I checked the guest and signed-in cases."}]})
+	await process_frame
+	_check(game.hud._modal.position.x >= game.hud._root.size.x * 0.49 and game.hud._dim.color.a < 0.15, "Conversation cards leave the person visible on the left")
+	var conversation_x: float = game.hud._modal.position.x
+	game.hud.show_feedback("Maya appreciates your careful testing.")
+	_check(is_equal_approx(game.hud._modal.position.x, conversation_x), "Conversation feedback retains the right-hand layout")
+	_check(game.hud._stats_panel.is_visible_in_tree(), "Dialogue and feedback retain the persistent meter values")
+	for key: String in ["delivery", "quality", "trust", "energy"]:
+		_check(game.hud._stat_values[key].text == str(int(game.stats[key])), "The persistent %s value matches game state" % key)
+	var original_hud_size: Vector2 = game.hud._root.size
+	game.hud._root.size = Vector2(960, 900)
+	game.hud.set_conversation(true)
+	_check(game.hud._modal.position.x < 200 and game.hud._dim.color.a > 0.6, "Narrow conversation layouts return to a centered modal")
+	game.hud._root.size = original_hud_size
+	game.hud.set_conversation(false)
+	game.hud.hide_modal()
 	_finish()
 
 

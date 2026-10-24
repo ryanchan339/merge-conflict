@@ -46,6 +46,7 @@ func _run() -> void:
 	var stage_before: int = game.stage_index
 	await _tap(KEY_ESCAPE)
 	_check(game.paused and game.hud.is_modal_open() and not game.player.enabled, "Escape opens the pause menu")
+	_check(game.hud._stats_panel.is_visible_in_tree() and game.hud._stats_layer.layer > game.hud.layer, "The four meter values stay visible above the pause menu")
 	await _tap(KEY_ESCAPE)
 	_check(not game.paused and not game.hud.is_modal_open() and game.player.enabled, "Escape resumes from the pause menu")
 	_check(game.stage_index == stage_before, "Pausing and resuming preserve the current task")

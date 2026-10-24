@@ -3,7 +3,7 @@ extends SceneTree
 ## Checks real collision geometry, rather than merely checking marker data.
 
 const OfficeScene = preload("res://scripts/office.gd")
-const REQUIRED_TARGETS: Array[String] = ["desk", "mentor", "manager", "standup", "kitchen", "intern", "exit", "phone", "fridge", "drawer", "cup", "coffee_machine"]
+const REQUIRED_TARGETS: Array[String] = ["desk", "mentor", "manager", "manager_seat", "hr", "standup", "kitchen", "intern", "exit", "phone", "fridge", "drawer", "cup", "coffee_machine", "printer", "vending_machine", "snack", "water_cooler", "whiteboard", "water_plant"]
 const CELL_SIZE: float = 0.5
 const REACH: float = 3.6
 var _failures: int = 0
@@ -19,6 +19,12 @@ func _run() -> void:
 	# Allow the server to register all procedural static collision shapes.
 	for frame: int in range(3):
 		await physics_frame
+	_check(office.printer_jammed, "Printer starts with a visible paper jam")
+	_check(not office.snack_available and not office._snack_root.visible, "Vending pickup is initially empty")
+	office.dispense_snack()
+	_check(office.snack_available and office._snack_root.visible, "Vending machine dispenses a physical snack")
+	await create_timer(0.75).timeout
+	_check(absf(office._snack_root.position.y - 0.56) < 0.01, "Snack falls into the accessible pickup tray")
 	var space: PhysicsDirectSpaceState3D = office.get_world_3d().direct_space_state
 	var capsule := CapsuleShape3D.new()
 	capsule.radius = 0.32
@@ -51,6 +57,7 @@ func _run() -> void:
 		if not office.interaction_positions.has(id):
 			_check(false, "Missing interaction marker: " + id)
 			continue
+		_check(office.target_label(id).ends_with("."), id + " has a complete action sentence")
 		var marker: Vector3 = office.target_position(id)
 		var valid_points: int = 0
 		for key: Variant in reachable:
@@ -116,6 +123,27 @@ func _run() -> void:
 	_check(office._phone_root.visible, "Returned phone reappears on the desk")
 	_check(not office.toggle_fridge() and not office.fridge_open, "Refrigerator closes")
 	_check(not office.toggle_drawer() and not office.drawer_open, "Drawer closes")
+	_check(office.people.has("hr") and office.people.has("manager"), "HR and manager retain their conversation actors")
+	office.clear_printer()
+	_check(not office.printer_jammed and office.target_label("printer") == "Print a page.", "Clearing the printer changes its state and action")
+	await create_timer(1.15).timeout
+	_check(not office._printer_jam.visible and office._printed_page.visible, "Jammed paper clears and a real printed page emerges")
+	_check(absf(office._printed_page.position.z + 3.38) < 0.01, "Printed paper reaches the output tray")
+	office.print_page()
+	_check(office._printed_page.position.z < -3.7, "Printer can start another physical page")
+	office.take_snack()
+	_check(not office.snack_available and not office._snack_root.visible, "Picking up the snack empties the tray")
+	office.use_water_cooler()
+	_check(office._water_stream.visible and office._cooler_water.visible, "Water cooler physically pours into a cup")
+	office.update_whiteboard()
+	_check(office.whiteboard_updated, "Mystery ticket is marked for clarification")
+	office.water_plant()
+	_check(office.plant_watered and office._plant_stream.visible and office._watering_can.visible, "Plant watering displays a can and water")
+	await create_timer(1.3).timeout
+	_check(not office._water_stream.visible, "Water cooler stops pouring")
+	_check(office._whiteboard_note.position.distance_to(Vector3(10.95, 1.62, -11.45)) < 0.01, "Mystery sticky physically moves to Needs clarification")
+	_check(not office._plant_stream.visible and not office._watering_can.visible, "Plant watering finishes cleanly")
+	_check(office._plant_leaves.size() > 0 and office._plant_leaves[0].material_override == office._materials["leaf_watered"], "Watered leaves respond and become greener")
 	print("WORLD TEST: %s" % ("PASS" if _failures == 0 else "%d failures" % _failures))
 	office.queue_free()
 	await process_frame

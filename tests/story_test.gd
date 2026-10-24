@@ -6,7 +6,8 @@ const Story = preload("res://content/story.gd")
 const STAT_NAMES: Array[String] = ["delivery", "quality", "trust", "energy"]
 const REQUIRED_CARDS: Array[String] = [
 	"welcome", "standup", "mentor", "feature", "review", "intern",
-	"manager", "manager_scope", "kitchen", "incident", "debrief"
+	"manager", "manager_scope", "kitchen", "incident", "debrief",
+	"hr_complaint", "hr_coffee", "hr_meeting", "hr_crunch"
 ]
 const DAY_SEQUENCE: Array[String] = [
 	"standup", "mentor", "feature", "review", "intern", "manager", "kitchen", "incident"
@@ -29,6 +30,7 @@ func _initialize() -> void:
 	_test_schema()
 	_test_effect_separation_and_clamping()
 	_test_evaluation_boundaries()
+	_test_hr_complaints()
 	if failures.is_empty():
 		_walk_day(0, {"delivery": 35, "quality": 45, "trust": 50, "energy": 75}, {}, [])
 		_check(path_count == 13122, "Expected all 13,122 complete decision paths; got %d." % path_count)
@@ -69,7 +71,9 @@ func _test_schema() -> void:
 			for key in ["label", "hint", "feedback", "next"]:
 				_check(typeof(choice.get(key)) == TYPE_STRING, "%s.%s must be a string." % [location, key])
 			_check(not str(choice.get("label", "")).is_empty(), "%s needs a label." % location)
-			_check(str(choice.get("label", "")).length() <= 90, "%s label exceeds 90 characters." % location)
+			var label: String = str(choice.get("label", ""))
+			_check(label.length() <= 60, "%s label exceeds 60 characters." % location)
+			_check(label.ends_with(".") or label.ends_with("?") or label.ends_with("!"), "%s should end its complete sentence with punctuation." % location)
 			_check(str(choice.get("hint", "")).length() <= 140, "%s hint exceeds 140 characters." % location)
 			_check(typeof(choice.get("effects")) == TYPE_DICTIONARY, "%s.effects must be a dictionary." % location)
 			var next_card: String = choice.get("next", "")
@@ -120,6 +124,28 @@ func _expect_ending(stats: Dictionary, flags: Dictionary, expected: String, cont
 	_check(evaluation.get("subtitle", "") == expected, "%s: expected %s, got %s." % [context, expected, evaluation.get("subtitle", "missing")])
 	for key in ["title", "subtitle", "body", "color"]:
 		_check(typeof(evaluation.get(key)) == TYPE_STRING and not str(evaluation.get(key, "")).is_empty(), "Ending %s needs nonempty %s." % [expected, key])
+
+
+func _test_hr_complaints() -> void:
+	var menu: Dictionary = cards["hr_complaint"]
+	var seen_topics: Array[String] = []
+	var terminal_choices: int = 0
+	for topic_choice: Dictionary in menu["choices"]:
+		var topic: String = str(topic_choice.get("next", ""))
+		_check(topic in ["hr_coffee", "hr_meeting", "hr_crunch"] and not seen_topics.has(topic), "The HR menu should reach each complaint topic exactly once.")
+		seen_topics.append(topic)
+		_check(topic_choice["effects"].is_empty() and int(topic_choice.get("minutes", -1)) == 0, "Selecting an HR topic should not charge time or apply consequences before the decision.")
+		for choice: Dictionary in cards[topic]["choices"]:
+			terminal_choices += 1
+			_check(choice.get("next", "").is_empty(), "A resolved complaint should close instead of changing the main workday.")
+			_check(typeof(choice.get("minutes")) == TYPE_INT and int(choice["minutes"]) >= 2 and int(choice["minutes"]) <= 10, "A resolved complaint needs a bounded, explicit time cost.")
+			var state: Dictionary = _apply_effects({"delivery": 35, "quality": 45, "trust": 50, "energy": 75}, {}, choice["effects"])
+			_check(state["flags"].get("hr_resolved", false) == true, "Every completed HR path must supply the repeat-visit guard.")
+			_check(state["flags"].get(topic, false) == true, "Every HR path should record the topic actually discussed.")
+			_check(typeof(state["flags"].get("hr_filed")) == TYPE_BOOL, "HR should distinguish filing a complaint from choosing avoidance.")
+			_check(int(state["stats"]["trust"]) != 50, "Different reporting approaches should have a trust consequence.")
+			_check(Story.ending(state["stats"], state["flags"]).get("subtitle", "") in ENDINGS, "Optional HR flags must remain compatible with the existing evaluation.")
+	_check(seen_topics.size() == 3 and terminal_choices == 9, "HR should provide three substantive topics and nine reporting approaches.")
 
 
 func _test_evaluation_boundaries() -> void:
