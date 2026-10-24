@@ -1,0 +1,29 @@
+; Intern Simulator — a first-person, one-day office comedy.
+config_version=5
+
+[application]
+config/name="Merge Conflict — Intern Simulator"
+config/icon="res://icon.svg"
+run/main_scene="res://scenes/main.tscn"
+config/features=PackedStringArray("4.4", "GL Compatibility")
+config/description="Your final internship day at a company that considers coffee a critical dependency."
+
+[display]
+window/size/viewport_width=1440
+window/size/viewport_height=900
+window/size/window_width_override=1280
+window/size/window_height_override=800
+window/stretch/mode="canvas_items"
+
+[rendering]
+renderer/rendering_method="gl_compatibility"
+renderer/rendering_method.mobile="gl_compatibility"
+textures/default_filters/use_nearest_mipmap_filter=false
+anti_aliasing/quality/msaa_3d=2
+environment/defaults/default_clear_color=Color(0.09, 0.13, 0.17, 1)
+
+[physics]
+common/physics_ticks_per_second=60
+
+[audio]
+driver/enable_input=false
