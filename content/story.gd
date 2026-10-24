@@ -112,6 +112,57 @@ static func card(id: String) -> Dictionary:
 				_choice("I’ll shut down the whole app.", "", {"delivery": -5, "quality": -6, "trust": -7, "energy": -5, "incident_resolved": false}, "The charges stop, along with everyone’s afternoon.", "")
 			]
 		},
+		"inbox_mentor": {
+			"eyebrow":"SLACK / DIRECT MESSAGE", "title":"Maya sent you a ticket.", "speaker":"Maya · Slack",
+			"body":"[b]Maya · 09:30[/b]\nYou own the Save favorites ticket. The description says “make it intuitive,” a phrase that has never caused a problem.\n\nBefore you build, how will you clarify what Save does?",
+			"choices":[
+				{"label":"I'll walk over and clarify the ticket with Maya.", "hint":"", "effects":{}, "feedback":"Your ticket stays open. Maya is at her desk.", "next":"", "visit":"mentor"},
+				_choice("I'll send Maya a focused question on Slack.", "", {}, "Maya is typing. Mercifully, this is a real answer.", "mentor"),
+				_choice("I'll guess the requirements and start building.", "", {"delivery":5,"quality":-5,"trust":-10,"clarified":false}, "You turn an unclear sentence into a very confident assumption.", "")
+			]
+		},
+		"push_cr": {
+			"eyebrow":"CHANGES / DRAFT CR #104", "title":"Push your change for review.", "speaker":"Changes · CR #104",
+			"body":"[b]CR #104 · Save coffee favorites[/b]\nYour implementation is ready for a human review. The checklist is simple: remember favorites, ask guests to sign in, and never place an order.\n\nMaya is the assigned reviewer. The button says Push, not Pray.",
+			"choices":[_choice("I'll push CR #104 and request Maya's review.", "", {"cr_submitted":true}, "CR #104 is open. Maya receives a review request on Slack.", "")]
+		},
+		"review_notice": {
+			"eyebrow":"CHANGES / REVIEW COMMENTS", "title":"Maya requested changes.", "speaker":"Maya · CR #104",
+			"body":"[b]Maya · Two comments on CR #104[/b]\n“Does Save only remember the drink, or can it place an order?”\n“What happens when a guest double-taps?”\n\n[b]Status: Changes requested.[/b] The Merge button still works. So does asking a question.",
+			"choices":[
+				{"label":"I'll ask Maya in person before I merge anything.", "hint":"", "effects":{}, "feedback":"You leave the CR open and head to Maya's desk.", "next":"", "visit":"mentor"},
+				_choice("I'll read the comments and check the cases here.", "", {"review_context":true}, "The review checklist is ready. Check it before you merge.", ""),
+				_choice("I'll merge now and deal with the comments later.", "", {"delivery":8,"quality":-10,"trust":-8,"early_merge":true,"cr_merged":true,"tested":false}, "CR #104 is merged with unresolved comments. Maya posts a very precise question mark.", "")
+			]
+		},
+		"review_context": {
+			"eyebrow":"MAYA'S DESK / REVIEW CLARIFICATION", "title":"One tap. Zero purchases.", "speaker":"Maya · senior engineer",
+			"body":"Maya: “Save only remembers a favorite. Guests must sign in. A double-tap should save once and never charge anyone.”\n\nShe sends the checklist to your CR. The clarification took less time than an incident would.",
+			"choices":[_choice("I'll return to my computer and check those cases.", "", {"review_context":true}, "Maya's clarification is attached to CR #104.", "")]
+		},
+		"review_followup": {
+			"eyebrow":"CHANGES / MERGED WITH OPEN COMMENTS", "title":"The comments survived the merge.", "speaker":"Maya · CR #104",
+			"body":"[b]CR #104 · Already merged[/b]\nMaya: “Merging did not answer my questions.”\n\nYou cannot unclick history, but you can test the guest and double-tap cases and post a follow-up.",
+			"choices":[
+				_choice("I'll test the missed cases and post a follow-up fix.", "", {"quality":6,"trust":3,"energy":-5,"tested":true}, "You post the checks and a follow-up patch. Maya appreciates the recovery, not the original merge.", ""),
+				_choice("I'll mark the comments resolved without checking.", "", {"delivery":3,"trust":-3,"tested":false}, "The comments are closed. The questions are not.", "")
+			]
+		},
+		"intern_help": {
+			"eyebrow":"SAM'S DESK / FOLLOW-UP", "title":"The discount only runs once.", "speaker":"Sam · fellow intern",
+			"body":"Sam shows you two discount buttons stacked on top of each other. You help remove the duplicate.\n\nSam: “I'll put the fix in a CR. Finance can stop holding its breath.”",
+			"choices":[_choice("I'll head back after you send the review request.", "", {}, "Sam thanks you and pushes the follow-up CR.", "")]
+		},
+		"waiting_maya": {
+			"eyebrow":"SLACK / PENDING CONVERSATION", "title":"Maya is at her desk.", "speaker":"Slack · saved task",
+			"body":"You chose to ask Maya before continuing. Your draft and review comments are saved here while you talk.",
+			"choices":[{"label":"I'll go talk to Maya now.", "hint":"", "effects":{}, "feedback":"", "next":"", "visit":"mentor"}]
+		},
+		"waiting_sam": {
+			"eyebrow":"SLACK / PENDING CONVERSATION", "title":"Sam is waiting at his desk.", "speaker":"Slack · saved task",
+			"body":"You offered to help Sam in person. His discount has acquired more confidence than the accounting department.",
+			"choices":[{"label":"I'll go help Sam now.", "hint":"", "effects":{}, "feedback":"", "next":"", "visit":"intern"}]
+		},
 		"hr_complaint": {
 			"eyebrow": "PEOPLE OPERATIONS / OPEN DOOR",
 			"title": "Please describe the situation.",
@@ -166,6 +217,22 @@ static func card(id: String) -> Dictionary:
 			]
 		}
 	}
+	for choice: Dictionary in cards["feature"]["choices"]:
+		choice["next"] = "push_cr"
+	for choice: Dictionary in cards["review"]["choices"]:
+		choice["effects"]["cr_merged"] = true
+	cards["review"]["title"] = "Check the comments. Decide whether to merge."
+	cards["review"]["choices"][0]["label"] = "I'll test all three cases, then merge CR #104."
+	cards["review"]["choices"][1]["label"] = "I'll merge now because the happy path looked happy."
+	cards["review"]["choices"][2]["label"] = "I'll ask the AI to approve and merge its own work."
+	cards["review"]["choices"][0]["feedback"] = "You fix the double-tap bug, attach passing checks, and merge CR #104. Maya approves."
+	cards["intern"]["speaker"] = "Sam · Slack direct message"
+	cards["intern"]["choices"][0]["visit"] = "intern"
+	for card_id: String in ["inbox_mentor", "mentor", "intern", "waiting_maya", "waiting_sam"]:
+		cards[card_id]["app"] = "slack"
+	for card_id: String in ["push_cr", "review_notice", "review", "review_followup", "incident"]:
+		cards[card_id]["app"] = "changes"
+	cards["feature"]["app"] = "ai"
 	return cards.get(id, {})
 
 
