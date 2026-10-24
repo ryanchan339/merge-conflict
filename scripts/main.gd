@@ -262,6 +262,7 @@ func _choose(index: int) -> void:
 		_set_stage(0)
 		player.set_active(true)
 		return
+	var previous_stats: Dictionary = stats.duplicate()
 	var effects: Dictionary = choice.get("effects", {})
 	for key: String in effects:
 		if stats.has(key) and not effects[key] is bool:
@@ -274,14 +275,19 @@ func _choose(index: int) -> void:
 	pending_next = str(choice.get("next", ""))
 	pending_advance = not ambient
 	_update_hud()
+	var changes: Dictionary = {}
+	for key: String in stats:
+		var change: int = int(stats[key]) - int(previous_stats[key])
+		if change != 0:
+			changes[key] = change
 	var feedback: String = str(choice.get("feedback", ""))
-	if feedback.is_empty():
+	if feedback.is_empty() and changes.is_empty():
 		_continue()
 	else:
 		if card_on_computer:
-			computer.show_feedback(feedback)
+			computer.show_feedback(feedback, changes)
 		else:
-			hud.show_feedback(feedback)
+			hud.show_feedback(feedback, changes)
 		_play_tone(650.0, 0.06, 0.06)
 
 func _continue() -> void:

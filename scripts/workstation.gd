@@ -203,7 +203,7 @@ func show_card(card: Dictionary) -> void:
 		content.add_child(button)
 
 
-func show_feedback(text: String) -> void:
+func show_feedback(text: String, changes: Dictionary = {}) -> void:
 	_clear_window()
 	_card_open = true
 	_feedback = true
@@ -211,7 +211,18 @@ func show_feedback(text: String) -> void:
 	_window.show()
 	_window_stack.add_child(_label("TASK UPDATE", 17, TEAL))
 	var content := _scroll_content()
-	content.add_child(_body(text.split("\n\n")[0]))
+	if not text.is_empty():
+		content.add_child(_body(text.split("\n\n")[0]))
+	var change_row := HFlowContainer.new()
+	change_row.add_theme_constant_override("h_separation", 22)
+	change_row.add_theme_constant_override("v_separation", 8)
+	content.add_child(change_row)
+	for key: String in ["delivery", "quality", "trust", "energy"]:
+		var delta: int = int(changes.get(key, 0))
+		if delta != 0:
+			change_row.add_child(_label("%s %+d" % [key.capitalize(), delta], 23, Color("97e5b4") if delta > 0 else Color("ffaaa0")))
+	if changes.is_empty():
+		change_row.add_child(_label("No stat changes.", 20, TEAL))
 	var next := _button("Continue working.", true)
 	next.pressed.connect(func() -> void: continue_pressed.emit())
 	_window_stack.add_child(next)

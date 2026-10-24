@@ -286,10 +286,22 @@ func show_card(card: Dictionary) -> void:
 		content.add_child(button)
 
 
-func show_feedback(text: String) -> void:
+func show_feedback(text: String, changes: Dictionary = {}) -> void:
 	_open_modal("feedback")
 	var content := _scroll_content()
-	content.add_child(_body(text.split("\n\n")[0]))
+	if not text.is_empty():
+		content.add_child(_body(text.split("\n\n")[0]))
+	var change_row := HFlowContainer.new()
+	change_row.add_theme_constant_override("h_separation", 18)
+	change_row.add_theme_constant_override("v_separation", 6)
+	content.add_child(change_row)
+	for key: String in ["delivery", "quality", "trust", "energy"]:
+		var delta: int = int(changes.get(key, 0))
+		if delta != 0:
+			var change_label := _label("%s %+d" % [key.capitalize(), delta], 19, Color("16734c") if delta > 0 else Color("b33f3f"))
+			change_row.add_child(change_label)
+	if changes.is_empty():
+		change_row.add_child(_label("No stat changes.", 16, MUTED))
 	var button := _button("Continue.", true)
 	button.pressed.connect(func() -> void: continue_pressed.emit())
 	_stack.add_child(button)
@@ -376,7 +388,7 @@ func _fit_modal() -> void:
 		viewport_size = Vector2(1440, 900)
 	var height: float = 450.0
 	if _mode == "feedback":
-		height = 220.0
+		height = 270.0
 	elif _mode == "pause":
 		height = 380.0
 	elif _mode == "ending":
