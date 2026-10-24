@@ -4,6 +4,8 @@ extends CanvasLayer
 signal closed
 signal scrolled(count: int)
 
+const INTER_FONT = preload("res://assets/fonts/Inter.ttf")
+
 const POSTS: Array[Dictionary] = [
 	{"caption": "Deploying directly\nto caffeine.", "creator": "@bean_deploy", "likes": "12.8K", "scene": 0, "a": "#ff855f", "b": "#ffc868", "sound": "espresso.exe"},
 	{"caption": "Senior engineer\nreviewing my work.", "creator": "@staff_cat", "likes": "84.2K", "scene": 1, "a": "#81ddbc", "b": "#bff6d4", "sound": "mechanical purrs"},
@@ -259,7 +261,7 @@ func _build_ui() -> void:
 	_dots = _label("", Vector2(34, 639), Vector2(300, 19), 15)
 	_dots.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_dots.modulate.a = 0.8
-	_button("Put down", Vector2(114, 662), Vector2(140, 32), 14, close_phone)
+	_button("I’ll put this down.", Vector2(101, 662), Vector2(166, 32), 14, close_phone)
 	_progress = ColorRect.new()
 	_progress.position = Vector2(14, 653)
 	_progress.size = Vector2(0, 2)
@@ -287,6 +289,7 @@ func _label(text: String, at: Vector2, dimensions: Vector2, font_size: int) -> L
 	label.position = at
 	label.size = dimensions
 	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	label.add_theme_font_override("font", INTER_FONT)
 	label.add_theme_font_size_override("font_size", font_size)
 	label.add_theme_color_override("font_color", Color.WHITE)
 	label.add_theme_constant_override("shadow_offset_x", 0)
@@ -303,6 +306,7 @@ func _button(text: String, at: Vector2, dimensions: Vector2, font_size: int, act
 	button.size = dimensions
 	button.focus_mode = Control.FOCUS_NONE
 	button.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	button.add_theme_font_override("font", INTER_FONT)
 	button.add_theme_font_size_override("font_size", font_size)
 	button.add_theme_color_override("font_color", Color.WHITE)
 	button.add_theme_color_override("font_hover_color", Color.WHITE)
@@ -334,7 +338,7 @@ class LoopVideo extends Control:
 	var color_b: Color = Color("#ffc868")
 	var ink: Color = Color("#243447")
 	var cream: Color = Color("#fff5dd")
-	var font: Font = ThemeDB.fallback_font
+	var font: Font = preload("res://assets/fonts/Inter.ttf")
 
 
 	func set_clip(index: int, first: Color, second: Color) -> void:

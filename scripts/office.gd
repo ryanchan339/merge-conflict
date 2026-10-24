@@ -8,9 +8,16 @@ var monitor_surface: MeshInstance3D
 var seat_eye := Vector3(8.2, 1.34, 4.15)
 var seat_look := Vector3(8.2, 1.34, 2.99)
 var stand_position := Vector3(8.2, 0.0, 5.2)
+var manager_seat_eye := Vector3(-10.8, 1.25, -7.55)
+var manager_stand_position := Vector3(-10.8, 0, -6.55)
+var people: Dictionary = {}
 var fridge_open: bool = false
 var drawer_open: bool = false
 var cup_state: String = "counter"
+var printer_jammed: bool = true
+var snack_available: bool = false
+var plant_watered: bool = false
+var whiteboard_updated: bool = false
 var _materials: Dictionary = {}
 var _fridge_hinge: Node3D
 var _drawer_slide: Node3D
@@ -24,6 +31,24 @@ var _fridge_tween: Tween
 var _drawer_tween: Tween
 var _coffee_brewing: bool = false
 var _brew_time: float = 0.0
+var _printer_jam: Node3D
+var _printed_page: Node3D
+var _printer_status: MeshInstance3D
+var _printer_status_label: Label3D
+var _printer_tween: Tween
+var _snack_root: Node3D
+var _snack_tween: Tween
+var _vending_status: MeshInstance3D
+var _water_stream: MeshInstance3D
+var _cooler_water: MeshInstance3D
+var _water_tween: Tween
+var _whiteboard_note: Node3D
+var _whiteboard_note_title: Label3D
+var _whiteboard_tween: Tween
+var _watering_can: Node3D
+var _plant_stream: MeshInstance3D
+var _plant_tween: Tween
+var _plant_leaves: Array[MeshInstance3D] = []
 const CUP_COUNTER := Vector3(-12.06, 1.14, 3.2)
 const CUP_MACHINE := Vector3(-11.99, 1.2, 4.7)
 
@@ -38,6 +63,9 @@ func _ready() -> void:
 	_build_workstations()
 	_build_lobby()
 	_build_details()
+	_build_hr_corner()
+	_build_vending_machine()
+	_build_water_cooler()
 
 
 func target_position(id: String) -> Vector3:
@@ -47,6 +75,28 @@ func target_position(id: String) -> Vector3:
 func target_label(id: String) -> String:
 	return str(interaction_labels.get(id, id.capitalize()))
 
+func conversation_position(id: String) -> Vector3:
+	if people.has(id):
+		var person: Node3D = people[id]
+		return person.global_position + Vector3.UP * (1.29 if id == "manager" else 1.53)
+	return target_position(id)
+
+func face_person(id: String, viewer: Vector3) -> void:
+	if not people.has(id):
+		return
+	var person: Node3D = people[id]
+	var toward: Vector3 = viewer - person.global_position
+	if toward.length_squared() > 0.01:
+		var target_angle: float = atan2(toward.x, toward.z)
+		create_tween().tween_property(person, "global_rotation:y", target_angle, 0.28)
+
+func _build_hr_corner() -> void:
+	_desk(self, "People Operations desk", Vector3(1.15, 0, -10.65), 180.0, false)
+	var hr := _target(self, "hr", "Talk to Alex in People Operations.", Vector3(1.1, 0, -9.35), Vector3(1.1, 1.53, -9.35))
+	_person(hr, Vector3.ZERO, "gold", "skin", "hair", 0.0, false)
+	_sign(self, "PEOPLE OPERATIONS", Vector3(1.15, 2.0, -11.52), 0.0, 0.0028, Color("203744"))
+	_sign(self, "ALEX / HR", Vector3(1.15, 1.01, -10.05), 0.0, 0.0021, Color("203744"))
+
 
 func toggle_fridge() -> bool:
 	fridge_open = not fridge_open
@@ -54,7 +104,7 @@ func toggle_fridge() -> bool:
 		_fridge_tween.kill()
 	_fridge_tween = create_tween().set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
 	_fridge_tween.tween_property(_fridge_hinge, "rotation:y", deg_to_rad(105.0) if fridge_open else 0.0, 0.35)
-	_set_target_label("fridge", "Close fridge" if fridge_open else "Open fridge")
+	_set_target_label("fridge", "Close the fridge." if fridge_open else "Open the fridge.")
 	return fridge_open
 
 
@@ -66,7 +116,7 @@ func toggle_drawer() -> bool:
 	_drawer_tween.tween_property(_drawer_slide, "position:z", 3.95 if drawer_open else 3.3, 0.3)
 	_drawer_cup.visible = drawer_open and cup_state == "counter"
 	_set_prop_collision(_drawer_cup, _drawer_cup.visible)
-	_set_target_label("drawer", "Close drawer" if drawer_open else "Open drawer")
+	_set_target_label("drawer", "Close the drawer." if drawer_open else "Open the drawer.")
 	interaction_positions["drawer"] = Vector3(9.15, 0.53, 4.35 if drawer_open else 3.7)
 	return drawer_open
 
@@ -83,7 +133,7 @@ func set_cup_state(state: String) -> void:
 		_drawer_cup.visible = drawer_open and state == "counter"
 		_set_prop_collision(_drawer_cup, _drawer_cup.visible)
 	interaction_positions["cup"] = _cup_root.global_position
-	_set_target_label("cup", "Take coffee" if state == "filled" else "Take cup")
+	_set_target_label("cup", "Take the coffee." if state == "filled" else "Take the cup.")
 
 
 func set_coffee_brewing(active: bool) -> void:
@@ -96,6 +146,108 @@ func set_coffee_brewing(active: bool) -> void:
 func set_phone_visible(is_visible: bool) -> void:
 	_phone_root.visible = is_visible
 	_set_prop_collision(_phone_root, is_visible)
+
+
+func clear_printer() -> void:
+	if not printer_jammed:
+		return
+	printer_jammed = false
+	_printer_status.material_override = _materials["screen_line"]
+	_printer_status_label.text = "READY"
+	_set_target_label("printer", "Print a page.")
+	var clear_tween := create_tween().set_parallel(true)
+	clear_tween.tween_property(_printer_jam, "position", _printer_jam.position + Vector3(0.0, 0.3, 0.2), 0.35)
+	clear_tween.tween_property(_printer_jam, "scale", Vector3.ONE * 0.05, 0.35)
+	clear_tween.finished.connect(func() -> void:
+		_printer_jam.hide()
+		print_page()
+	)
+
+
+func print_page() -> void:
+	if printer_jammed:
+		return
+	if is_instance_valid(_printer_tween):
+		_printer_tween.kill()
+	_printed_page.show()
+	_printed_page.position = Vector3(12.6, 1.16, -3.74)
+	_printer_tween = create_tween().set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	_printer_tween.tween_property(_printed_page, "position:z", -3.38, 0.7)
+
+
+func dispense_snack() -> void:
+	if snack_available:
+		return
+	snack_available = true
+	_snack_root.show()
+	_snack_root.position = Vector3(-0.85, 1.45, 0.0)
+	_set_prop_collision(_snack_root, true)
+	_vending_status.material_override = _materials["gold"]
+	if is_instance_valid(_snack_tween):
+		_snack_tween.kill()
+	_snack_tween = create_tween().set_trans(Tween.TRANS_BOUNCE).set_ease(Tween.EASE_OUT)
+	_snack_tween.tween_property(_snack_root, "position:y", 0.56, 0.65)
+	_snack_tween.finished.connect(func() -> void:
+		_vending_status.material_override = _materials["screen_line"]
+	)
+
+
+func take_snack() -> void:
+	if not snack_available:
+		return
+	snack_available = false
+	if is_instance_valid(_snack_tween):
+		_snack_tween.kill()
+	_snack_root.hide()
+	_set_prop_collision(_snack_root, false)
+	_vending_status.material_override = _materials["screen_line"]
+
+
+func use_water_cooler() -> void:
+	if is_instance_valid(_water_tween):
+		_water_tween.kill()
+	_water_stream.show()
+	_water_stream.scale.y = 0.05
+	_cooler_water.show()
+	_water_tween = create_tween()
+	_water_tween.tween_property(_water_stream, "scale:y", 1.0, 0.12)
+	_water_tween.tween_interval(0.85)
+	_water_tween.tween_property(_water_stream, "scale:y", 0.05, 0.15)
+	_water_tween.tween_callback(func() -> void: _water_stream.hide())
+
+
+func update_whiteboard() -> void:
+	whiteboard_updated = true
+	_whiteboard_note_title.text = "NEEDS\nCLARIFICATION"
+	if is_instance_valid(_whiteboard_tween):
+		_whiteboard_tween.kill()
+	_whiteboard_tween = create_tween().set_parallel(true).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
+	_whiteboard_tween.tween_property(_whiteboard_note, "position", Vector3(10.95, 1.62, -11.45), 0.65)
+	_whiteboard_tween.tween_property(_whiteboard_note, "rotation:z", deg_to_rad(-4.0), 0.65)
+
+
+func water_plant() -> void:
+	plant_watered = true
+	if is_instance_valid(_plant_tween):
+		_plant_tween.kill()
+	_watering_can.show()
+	_watering_can.rotation.z = 0.0
+	_plant_stream.show()
+	_plant_tween = create_tween()
+	_plant_tween.tween_property(_watering_can, "rotation:z", deg_to_rad(22.0), 0.2)
+	_plant_tween.tween_interval(0.75)
+	_plant_tween.tween_property(_watering_can, "rotation:z", 0.0, 0.2)
+	_plant_tween.tween_callback(func() -> void:
+		_watering_can.hide()
+		_plant_stream.hide()
+	)
+	for leaf: MeshInstance3D in _plant_leaves:
+		leaf.material_override = _materials["leaf_watered"]
+		var original_rotation: Vector3 = leaf.get_meta("rest_rotation") as Vector3
+		var response := create_tween().set_trans(Tween.TRANS_SINE)
+		response.tween_property(leaf, "rotation", original_rotation + Vector3(0.0, 0.0, 0.15), 0.3)
+		response.tween_property(leaf, "rotation", original_rotation - Vector3(0.0, 0.0, 0.08), 0.35)
+		response.tween_property(leaf, "rotation", original_rotation, 0.35)
 
 
 func _process(delta: float) -> void:
@@ -118,8 +270,9 @@ func _set_prop_collision(node: Node, active: bool) -> void:
 
 
 func _set_target_label(id: String, label: String) -> void:
-	interaction_labels[id] = label
-	_refresh_labels(self, id, label)
+	var sentence: String = label if label.ends_with(".") else label + "."
+	interaction_labels[id] = sentence
+	_refresh_labels(self, id, sentence)
 
 
 func _refresh_labels(node: Node, id: String, label: String) -> void:
@@ -148,6 +301,8 @@ func _make_materials() -> void:
 	_material("rug_pale", Color("a9b7a7"))
 	_material("green", Color("4d7956"))
 	_material("leaf_light", Color("799b66"))
+	_material("leaf_watered", Color("5b975e"))
+	_material("water", Color("78b9cf"), 0.22)
 	_material("skin", Color("d8a17c"))
 	_material("skin_dark", Color("9f6a4d"))
 	_material("hair", Color("382e32"))
@@ -257,12 +412,13 @@ func _build_manager_office() -> void:
 	_sign(room, "MANAGER", Vector3(-10.5, 2.85, -5.37), 0.0, 0.006, Color("203744"))
 	_sign(room, "OPEN DOOR. FULL CALENDAR.", Vector3(-10.5, 2.53, -5.36), 0.0, 0.0024, Color("203744"))
 	_desk(room, "Manager desk", Vector3(-9.8, 0.0, -9.25), 0.0, false)
-	_chair(room, Vector3(-9.8, 0.0, -10.42), 180.0, "coral")
-	var manager := _target(room, "manager", "Jordan · engineering manager", Vector3(-9.8, 0.0, -10.4), Vector3(-9.8, 1.48, -10.4))
+	_chair(room, Vector3(-10.7, 0.0, -10.42), 180.0, "coral")
+	var manager := _target(room, "manager", "Talk to Jordan.", Vector3(-10.7, 0.0, -10.4), Vector3(-10.7, 1.29, -10.4))
 	_person(manager, Vector3.ZERO, "teal", "skin_dark", "hair", 0.0, true)
 	_sign(room, "JORDAN", Vector3(-9.8, 1.03, -8.78), 0.0, 0.0021, Color("fff8e9"))
 	_box(room, "Desk nameplate", Vector3(-9.8, 0.99, -8.82), Vector3(0.65, 0.17, 0.055), "navy")
-	_chair(room, Vector3(-10.8, 0.0, -7.55), 0.0, "light_teal")
+	var visitor := _target(room, "manager_seat", "Take a seat for your 1:1.", Vector3.ZERO, manager_seat_eye - Vector3.UP * 0.55)
+	_chair(visitor, Vector3(-10.8, 0.0, -7.55), 0.0, "light_teal")
 	_chair(room, Vector3(-8.6, 0.0, -7.55), 0.0, "light_teal")
 	_planter(room, Vector3(-13.0, 0.0, -6.4), 1.2)
 	_shelf(room, Vector3(-13.3, 0.0, -9.8), 90.0)
@@ -275,21 +431,27 @@ func _build_manager_office() -> void:
 func _build_standup_space() -> void:
 	var room := _group(self, "Standup corner", Vector3.ZERO)
 	_box(room, "Standup carpet", Vector3(8.7, 0.018, -8.0), Vector3(8.8, 0.035, 6.4), "rug_pale")
-	_box(room, "Board surround", Vector3(9.0, 2.05, -11.7), Vector3(6.2, 2.6, 0.13), "wood")
-	_box(room, "Whiteboard", Vector3(9.0, 2.05, -11.59), Vector3(5.95, 2.36, 0.055), "white")
-	_sign(room, "DAILY STANDUP", Vector3(9.0, 2.92, -11.53), 0.0, 0.0042, Color("203744"))
-	_sign(room, "YESTERDAY        TODAY          BLOCKED", Vector3(9.0, 2.41, -11.52), 0.0, 0.00255, Color("247c7b"))
+	var board := _target(room, "whiteboard", "Update the whiteboard.", Vector3.ZERO, Vector3(9.0, 1.85, -11.49))
+	_box(board, "Board surround", Vector3(9.0, 2.05, -11.7), Vector3(6.2, 2.6, 0.13), "wood")
+	_box(board, "Whiteboard", Vector3(9.0, 2.05, -11.59), Vector3(5.95, 2.36, 0.055), "white", true)
+	_sign(board, "DAILY STANDUP", Vector3(9.0, 2.92, -11.53), 0.0, 0.0042, Color("203744"))
+	_sign(board, "TO DO        IN PROGRESS       NEEDS CLARIFICATION", Vector3(9.0, 2.41, -11.52), 0.0, 0.0021, Color("247c7b"))
 	for x: float in [8.0, 10.05]:
-		_box(room, "Board column", Vector3(x, 1.85, -11.53), Vector3(0.025, 1.45, 0.015), "light_teal")
+		_box(board, "Board column", Vector3(x, 1.85, -11.53), Vector3(0.025, 1.45, 0.015), "light_teal")
 	for i: int in range(7):
 		var x: float = 6.9 + float(i % 3) * 2.0 + float(i % 2) * 0.12
 		var y: float = 2.05 - float(i / 3) * 0.39
-		_box(room, "Sticky note", Vector3(x, y, -11.49), Vector3(0.55, 0.29, 0.012), "gold" if i % 2 == 0 else "coral")
-	_sign(room, "IT'S A STANDUP, NOT A TED TALK.", Vector3(8.8, 0.88, -11.5), 0.0, 0.00215, Color("203744"))
+		if i == 0:
+			_whiteboard_note = _group(board, "Mystery ticket", Vector3(x, y, -11.47))
+			_box(_whiteboard_note, "Mystery sticky", Vector3.ZERO, Vector3(0.67, 0.32, 0.015), "coral")
+			_whiteboard_note_title = _sign(_whiteboard_note, "COFFEE??\nSOMEHOW??", Vector3(0.0, 0.0, 0.014), 0.0, 0.00075, Color("203744"))
+		else:
+			_box(board, "Sticky note", Vector3(x, y, -11.49), Vector3(0.55, 0.29, 0.012), "gold" if i % 2 == 0 else "coral")
+	_sign(board, "IT'S A STANDUP, NOT A TED TALK.", Vector3(8.8, 0.88, -11.5), 0.0, 0.00215, Color("203744"))
 	_round_table(room, Vector3(9.0, 0.0, -7.65), 0.82, 0.98, "wood_light")
 	_mug(room, Vector3(8.6, 1.07, -7.6), "coral")
 	_box(room, "Meeting notebook", Vector3(9.25, 1.015, -7.65), Vector3(0.3, 0.025, 0.4), "navy")
-	var huddle := _target(room, "standup", "Standup · team huddle", Vector3(7.05, 0.0, -7.9), Vector3(7.05, 1.5, -7.9))
+	var huddle := _target(room, "standup", "Join the standup.", Vector3(7.05, 0.0, -7.9), Vector3(7.05, 1.5, -7.9))
 	_person(huddle, Vector3.ZERO, "coral", "skin", "hair_light", 0.0, false)
 	var colleague := _group(room, "Huddle engineer", Vector3(10.85, 0.0, -8.5))
 	_person(colleague, Vector3.ZERO, "navy", "skin_dark", "hair", -40.0, false)
@@ -300,7 +462,7 @@ func _build_standup_space() -> void:
 
 
 func _build_kitchen() -> void:
-	var kitchen := _target(self, "kitchen", "Take a break", Vector3.ZERO, Vector3(-8.9, 1.2, 5.4))
+	var kitchen := _target(self, "kitchen", "Take a break.", Vector3.ZERO, Vector3(-8.9, 1.2, 5.4))
 	_box(kitchen, "Kitchen floor", Vector3(-10.25, 0.012, 6.5), Vector3(7.0, 0.025, 8.6), "white")
 	for z: float in [3.0, 5.0, 7.0, 9.0, 10.0]:
 		_box(kitchen, "Tile grout", Vector3(-10.25, 0.027, z), Vector3(6.9, 0.005, 0.025), "floor")
@@ -311,7 +473,7 @@ func _build_kitchen() -> void:
 	for z: float in [2.95, 4.1, 5.25, 6.4, 7.45]:
 		_box(kitchen, "Cabinet division", Vector3(-12.135, 0.48, z), Vector3(0.012, 0.83, 0.022), "light_teal")
 		_box(kitchen, "Cabinet pull", Vector3(-12.1, 0.72, z + 0.2), Vector3(0.055, 0.055, 0.26), "gold")
-	var machine := _target(kitchen, "coffee_machine", "Use coffee machine", Vector3.ZERO, Vector3(-12.02, 1.4, 4.7))
+	var machine := _target(kitchen, "coffee_machine", "Use the coffee machine.", Vector3.ZERO, Vector3(-12.02, 1.4, 4.7))
 	_box(machine, "Coffee machine", Vector3(-12.55, 1.35, 4.7), Vector3(0.74, 0.65, 0.62), "navy", true)
 	_box(machine, "Coffee machine face", Vector3(-12.155, 1.39, 4.7), Vector3(0.035, 0.44, 0.48), "black")
 	_box(machine, "Coffee machine status", Vector3(-12.13, 1.53, 4.7), Vector3(0.025, 0.1, 0.22), "screen_line")
@@ -324,7 +486,7 @@ func _build_kitchen() -> void:
 		_sphere(_steam_root, "Steam puff", Vector3(0.0, float(i) * 0.15, 0.0), Vector3(0.085, 0.14, 0.085), "steam")
 	_steam_root.visible = false
 	_interaction_box(machine, Vector3(-12.1, 1.4, 4.7), Vector3(0.22, 0.66, 0.76))
-	_cup_root = _target(self, "cup", "Take cup", CUP_COUNTER, CUP_COUNTER)
+	_cup_root = _target(self, "cup", "Take the cup.", CUP_COUNTER, CUP_COUNTER)
 	_make_pickup_cup(_cup_root, true)
 	_sign(kitchen, "CUPS", Vector3(-12.07, 1.35, 3.2), 90.0, 0.0019, Color("203744"))
 	_box(kitchen, "Sink edge", Vector3(-12.72, 1.06, 6.7), Vector3(1.0, 0.035, 1.0), "metal")
@@ -362,14 +524,14 @@ func _build_workstations() -> void:
 	_box(self, "Pod divider", Vector3(-1.65, 1.13, -1.15), Vector3(6.4, 0.68, 0.09), "teal")
 	for x: float in [-3.4, 0.1]:
 		_box(self, "Divider sticky", Vector3(x, 1.21, -1.09), Vector3(0.24, 0.23, 0.014), "gold")
-	var mentor := _target(self, "mentor", "Maya · senior engineer", Vector3(-5.4, 0.0, -0.15), Vector3(-5.4, 1.5, -0.15))
+	var mentor := _target(self, "mentor", "Talk to Maya.", Vector3(-5.4, 0.0, -0.15), Vector3(-5.4, 1.5, -0.15))
 	_person(mentor, Vector3.ZERO, "teal", "skin_dark", "hair", 0.0, false)
 	_sign(self, "MAYA", Vector3(-3.4, 0.92, 0.77), 0.0, 0.0020, Color("fff8e9"))
 	_box(self, "Maya desk sign", Vector3(-3.4, 0.9, 0.74), Vector3(0.62, 0.16, 0.04), "navy")
 	var background_worker := _group(self, "Focused teammate", Vector3(0.1, 0.0, -3.65))
 	_person(background_worker, Vector3.ZERO, "coral", "skin", "hair_light", 0.0, true)
 	# The player's monitor faces the main entrance and is easy to find in a page.
-	var desk := _target(self, "desk", "Sit down", Vector3(8.2, 0.0, 3.25), Vector3(8.2, 1.34, 2.99))
+	var desk := _target(self, "desk", "Sit at your desk.", Vector3(8.2, 0.0, 3.25), Vector3(8.2, 1.34, 2.99))
 	_desk(desk, "Your desk", Vector3.ZERO, 180.0, true)
 	_chair(self, Vector3(8.2, 0.0, 4.55), 0.0, "coral")
 	_box(self, "Intern zone rug", Vector3(8.2, 0.008, 3.5), Vector3(5.5, 0.015, 4.5), "rug")
@@ -380,21 +542,18 @@ func _build_workstations() -> void:
 	_planter(self, Vector3(11.4, 0.0, 4.6), 1.25)
 	_desk(self, "Sam desk", Vector3(8.2, 0.0, -1.45), 0.0, false)
 	_chair(self, Vector3(8.2, 0.0, -2.7), 180.0, "light_teal")
-	var intern := _target(self, "intern", "Sam · fellow intern", Vector3(10.15, 0.0, -1.1), Vector3(10.15, 1.48, -1.1))
+	var intern := _target(self, "intern", "Talk to Sam.", Vector3(10.15, 0.0, -1.1), Vector3(10.15, 1.48, -1.1))
 	_person(intern, Vector3.ZERO, "coral", "skin", "hair_light", -20.0, false)
 	_sign(self, "SAM", Vector3(8.2, 0.93, -0.85), 0.0, 0.0021, Color("fff8e9"))
 	_box(self, "Sam desk sign", Vector3(8.2, 0.9, -0.88), Vector3(0.62, 0.16, 0.04), "navy")
 	_mug(self, Vector3(9.2, 0.89, -1.3), "gold")
 	# Perimeter furniture never blocks the loop around the workstations.
 	_shelf(self, Vector3(13.25, 0.0, 0.0), -90.0)
-	_box(self, "Printer cabinet", Vector3(12.6, 0.47, -4.1), Vector3(1.5, 0.94, 1.1), "wood_light", true)
-	_box(self, "Printer", Vector3(12.6, 1.1, -4.1), Vector3(1.0, 0.42, 0.75), "white")
-	_box(self, "Printer output", Vector3(12.6, 1.15, -3.7), Vector3(0.65, 0.06, 0.12), "black")
-	_box(self, "Printer paper", Vector3(12.6, 1.16, -3.59), Vector3(0.45, 0.008, 0.23), "white")
+	_build_printer()
 
 
 func _build_lobby() -> void:
-	var elevator := _target(self, "exit", "Elevator · end the day", Vector3(0.0, 0.0, 11.7), Vector3(0.0, 1.6, 11.57))
+	var elevator := _target(self, "exit", "End the day.", Vector3(0.0, 0.0, 11.7), Vector3(0.0, 1.6, 11.57))
 	_box(elevator, "Elevator surround", Vector3(0.0, 1.5, 0.0), Vector3(3.5, 3.0, 0.17), "navy", true)
 	_box(elevator, "Elevator door left", Vector3(-0.71, 1.4, -0.11), Vector3(1.39, 2.72, 0.06), "metal")
 	_box(elevator, "Elevator door right", Vector3(0.71, 1.4, -0.11), Vector3(1.39, 2.72, 0.06), "metal")
@@ -420,7 +579,7 @@ func _build_lobby() -> void:
 func _build_details() -> void:
 	_planter(self, Vector3(-12.8, 0.0, -3.5), 1.45)
 	_planter(self, Vector3(12.8, 0.0, 8.6), 1.55)
-	_planter(self, Vector3(0.0, 0.0, -7.5), 1.0)
+	_build_waterable_plant()
 	_planter(self, Vector3(-1.5, 0.79, -1.1), 0.4)
 	# A bulletin board and a few framed posters bring color to the blank walls.
 	_box(self, "Bulletin board rim", Vector3(-2.0, 2.0, -11.78), Vector3(3.5, 2.2, 0.1), "wood")
@@ -446,8 +605,108 @@ func _build_details() -> void:
 	_sign(self, "THE CLOUD", Vector3(-2.3, 1.49, -7.1), 0.0, 0.0028, Color("203744"))
 
 
+func _build_printer() -> void:
+	var printer := _target(self, "printer", "Clear the printer jam.", Vector3.ZERO, Vector3(12.6, 1.22, -3.68))
+	_box(printer, "Printer cabinet", Vector3(12.6, 0.47, -4.1), Vector3(1.5, 0.94, 1.1), "wood_light", true)
+	_box(printer, "Printer", Vector3(12.6, 1.1, -4.1), Vector3(1.0, 0.42, 0.75), "white", true)
+	_box(printer, "Scanner lid", Vector3(12.6, 1.34, -4.15), Vector3(0.95, 0.07, 0.65), "navy")
+	_box(printer, "Printer output slot", Vector3(12.6, 1.15, -3.7), Vector3(0.65, 0.06, 0.12), "black")
+	_box(printer, "Output paper support", Vector3(12.6, 1.13, -3.45), Vector3(0.55, 0.035, 0.45), "navy")
+	_printer_status = _box(printer, "Printer status light", Vector3(12.9, 1.25, -3.713), Vector3(0.11, 0.055, 0.018), "coral")
+	_printer_status_label = _sign(printer, "JAM", Vector3(12.6, 1.44, -3.7), 0.0, 0.0012, Color("203744"))
+	_printer_jam = _group(printer, "Crumpled jammed paper", Vector3(12.6, 1.25, -3.56))
+	for i: int in range(4):
+		var fold := _box(_printer_jam, "Paper fold", Vector3(0.0, float(i) * 0.09, 0.0), Vector3(0.43, 0.14, 0.009), "white")
+		fold.rotation_degrees.x = 32.0 if i % 2 == 0 else -32.0
+	_printed_page = _group(printer, "Printed page", Vector3(12.6, 1.16, -3.74))
+	_box(_printed_page, "Paper", Vector3.ZERO, Vector3(0.45, 0.009, 0.37), "white")
+	for i: int in range(5):
+		_box(_printed_page, "Printed line", Vector3(0.0, 0.007, -0.11 + float(i) * 0.045), Vector3(0.31 if i != 4 else 0.2, 0.004, 0.012), "navy")
+	_printed_page.hide()
+	_interaction_box(printer, Vector3(12.6, 1.22, -3.68), Vector3(1.02, 0.48, 0.18))
+
+
+func _build_vending_machine() -> void:
+	var machine := _target(self, "vending_machine", "Use the vending machine.", Vector3(12.8, 0.0, 6.6), Vector3(12.12, 1.35, 6.6))
+	_box(machine, "Vending back", Vector3(0.54, 1.13, 0.0), Vector3(0.14, 2.26, 1.6), "navy", true)
+	for z: float in [-0.75, 0.75]:
+		_box(machine, "Vending cabinet side", Vector3(0.0, 1.13, z), Vector3(1.2, 2.26, 0.1), "teal", true)
+	_box(machine, "Vending base", Vector3(0.0, 0.2, 0.0), Vector3(1.2, 0.4, 1.6), "navy", true)
+	_box(machine, "Vending header", Vector3(-0.03, 2.13, 0.0), Vector3(1.24, 0.3, 1.6), "teal", true)
+	_sign(machine, "SNACK OVERFLOW", Vector3(-0.665, 2.14, -0.04), -90.0, 0.0018, Color("fff8e9"))
+	_box(machine, "Snack display glass", Vector3(-0.62, 1.41, -0.13), Vector3(0.03, 1.12, 1.05), "glass", true)
+	_box(machine, "Keypad panel", Vector3(-0.64, 1.35, 0.59), Vector3(0.055, 1.2, 0.28), "navy", true)
+	_vending_status = _box(machine, "Snack machine display", Vector3(-0.677, 1.77, 0.59), Vector3(0.015, 0.12, 0.21), "screen_line")
+	for row: int in range(3):
+		for column: int in range(2):
+			_box(machine, "Snack selection button", Vector3(-0.68, 1.48 - float(row) * 0.13, 0.52 + float(column) * 0.12), Vector3(0.02, 0.065, 0.065), "white")
+	for row: int in range(3):
+		var y: float = 0.96 + float(row) * 0.34
+		_box(machine, "Snack shelf", Vector3(-0.05, y - 0.12, -0.13), Vector3(1.0, 0.035, 1.05), "metal", true)
+		for column: int in range(3):
+			var z: float = -0.47 + float(column) * 0.34
+			_box(machine, "Snack bag display", Vector3(-0.32, y, z), Vector3(0.17, 0.24, 0.24), "coral" if (column + row) % 2 == 0 else "gold")
+			_box(machine, "Snack bag stripe", Vector3(-0.415, y + 0.025, z), Vector3(0.012, 0.06, 0.18), "white")
+	_box(machine, "Pickup tray panel", Vector3(-0.62, 0.6, 0.0), Vector3(0.08, 0.42, 1.6), "teal", true)
+	_box(machine, "Pickup tray opening", Vector3(-0.673, 0.59, 0.0), Vector3(0.018, 0.27, 1.04), "black")
+	_box(machine, "Pickup tray", Vector3(-0.85, 0.41, 0.0), Vector3(0.46, 0.05, 1.04), "navy", true)
+	_sign(machine, "DEPLOY SNACK", Vector3(-0.68, 0.77, 0.0), -90.0, 0.00115, Color("fff8e9"))
+	_snack_root = _target(machine, "snack", "Take the snack.", Vector3(-0.85, 0.56, 0.0), Vector3(11.95, 0.56, 6.6))
+	_box(_snack_root, "Dispensed snack bag", Vector3.ZERO, Vector3(0.19, 0.22, 0.36), "coral")
+	_box(_snack_root, "Snack bag label", Vector3(-0.105, 0.025, 0.0), Vector3(0.012, 0.1, 0.27), "white")
+	_sign(_snack_root, "BYTE\nSIZED", Vector3(-0.116, 0.025, 0.0), -90.0, 0.00065, Color("203744"))
+	_interaction_box(_snack_root, Vector3.ZERO, Vector3(0.27, 0.28, 0.4))
+	_snack_root.hide()
+	_set_prop_collision(_snack_root, false)
+
+
+func _build_water_cooler() -> void:
+	var cooler := _target(self, "water_cooler", "Drink some water.", Vector3(-4.8, 0.0, 9.5), Vector3(-4.8, 1.1, 9.93))
+	_box(cooler, "Water cooler cabinet", Vector3(0.0, 0.58, 0.0), Vector3(0.72, 1.16, 0.7), "white", true)
+	_box(cooler, "Water cooler front", Vector3(0.0, 0.81, 0.365), Vector3(0.58, 0.49, 0.035), "navy")
+	_cylinder(cooler, "Water bottle", Vector3(0.0, 1.6, 0.0), 0.27, 0.65, "water")
+	_cylinder(cooler, "Bottle collar", Vector3(0.0, 1.22, 0.0), 0.15, 0.15, "light_teal")
+	_cylinder(cooler, "Bottle cap", Vector3(0.0, 1.95, 0.0), 0.18, 0.055, "navy")
+	_box(cooler, "Blue tap", Vector3(-0.13, 1.06, 0.42), Vector3(0.1, 0.065, 0.16), "teal")
+	_box(cooler, "Red tap", Vector3(0.13, 1.06, 0.42), Vector3(0.1, 0.065, 0.16), "coral")
+	_box(cooler, "Drip tray", Vector3(-0.13, 0.65, 0.42), Vector3(0.33, 0.045, 0.25), "metal")
+	_cylinder(cooler, "Water cup", Vector3(-0.13, 0.76, 0.43), 0.07, 0.18, "white")
+	_cooler_water = _cylinder(cooler, "Water in cup", Vector3(-0.13, 0.853, 0.43), 0.06, 0.009, "water")
+	_cooler_water.hide()
+	_water_stream = _cylinder(cooler, "Pouring drinking water", Vector3(-0.13, 0.94, 0.44), 0.012, 0.19, "water")
+	_water_stream.hide()
+	_sign(cooler, "HYDRATION\nNOT A MEETING", Vector3(0.0, 0.35, 0.371), 0.0, 0.0012, Color("203744"))
+	_interaction_box(cooler, Vector3(0.0, 1.08, 0.38), Vector3(0.62, 0.37, 0.18))
+
+
+func _build_waterable_plant() -> void:
+	var target := _target(self, "water_plant", "Water the office plant.", Vector3(0.0, 0.0, -7.5), Vector3(0.0, 0.75, -7.5))
+	var plant: Node3D = _planter(target, Vector3.ZERO, 1.0)
+	for child: Node in plant.get_children():
+		if child is MeshInstance3D and child.name.begins_with("Leaf"):
+			var leaf: MeshInstance3D = child as MeshInstance3D
+			leaf.set_meta("rest_rotation", leaf.rotation)
+			_plant_leaves.append(leaf)
+	_interaction_box(target, Vector3(0.0, 0.65, 0.0), Vector3(0.65, 1.3, 0.65))
+	_watering_can = _group(target, "Watering can", Vector3(0.5, 1.18, 0.0))
+	_cylinder(_watering_can, "Watering can body", Vector3.ZERO, 0.15, 0.24, "gold")
+	_box(_watering_can, "Watering can spout", Vector3(-0.23, 0.02, 0.0), Vector3(0.32, 0.055, 0.065), "gold")
+	var handle := TorusMesh.new()
+	handle.inner_radius = 0.1
+	handle.outer_radius = 0.125
+	var ring := MeshInstance3D.new()
+	ring.mesh = handle
+	ring.material_override = _materials["gold"]
+	ring.position = Vector3(0.13, 0.0, 0.0)
+	ring.rotation_degrees.x = 90.0
+	_watering_can.add_child(ring)
+	_watering_can.hide()
+	_plant_stream = _cylinder(target, "Plant watering stream", Vector3(0.14, 0.94, 0.0), 0.016, 0.37, "water")
+	_plant_stream.hide()
+
+
 func _build_fridge(parent: Node3D) -> void:
-	var fridge := _target(parent, "fridge", "Open fridge", Vector3(-12.9, 0.0, 9.3), Vector3(-12.03, 1.42, 9.3))
+	var fridge := _target(parent, "fridge", "Open the fridge.", Vector3(-12.9, 0.0, 9.3), Vector3(-12.03, 1.42, 9.3))
 	# An actual hollow cabinet: opening the hinged front reveals real shelves.
 	_box(fridge, "Fridge insulated back", Vector3(-0.64, 1.05, 0.0), Vector3(0.14, 2.1, 1.25), "white", true)
 	_box(fridge, "Fridge inner back", Vector3(-0.55, 1.06, 0.0), Vector3(0.025, 1.92, 1.08), "fridge_inside")
@@ -477,14 +736,14 @@ func _build_fridge(parent: Node3D) -> void:
 
 
 func _build_desk_props() -> void:
-	_phone_root = _target(self, "phone", "Pick up phone", Vector3(9.16, 0.878, 3.45), Vector3(9.16, 0.91, 3.45))
+	_phone_root = _target(self, "phone", "Pick up the phone.", Vector3(9.16, 0.878, 3.45), Vector3(9.16, 0.91, 3.45))
 	_phone_root.rotation_degrees.y = -12.0
 	_box(_phone_root, "Phone body", Vector3.ZERO, Vector3(0.23, 0.035, 0.4), "navy")
 	_box(_phone_root, "Phone glass", Vector3(0.0, 0.02, -0.006), Vector3(0.205, 0.008, 0.365), "screen")
 	_box(_phone_root, "Phone notification", Vector3(0.0, 0.026, -0.035), Vector3(0.17, 0.007, 0.1), "screen_line")
 	_box(_phone_root, "Phone speaker", Vector3(0.0, 0.026, -0.16), Vector3(0.055, 0.008, 0.012), "black")
 	_interaction_box(_phone_root, Vector3(0.0, 0.04, 0.0), Vector3(0.27, 0.12, 0.44))
-	var drawers := _target(self, "drawer", "Open drawer", Vector3.ZERO, Vector3(9.15, 0.53, 3.7))
+	var drawers := _target(self, "drawer", "Open the drawer.", Vector3.ZERO, Vector3(9.15, 0.53, 3.7))
 	for x: float in [8.81, 9.49]:
 		_box(drawers, "Drawer cabinet side", Vector3(x, 0.43, 3.25), Vector3(0.055, 0.58, 1.0), "wood_light", true)
 	_box(drawers, "Drawer cabinet base", Vector3(9.15, 0.17, 3.25), Vector3(0.72, 0.07, 1.0), "wood", true)
@@ -501,7 +760,7 @@ func _build_desk_props() -> void:
 	_box(_drawer_slide, "Extremely important pen", Vector3(0.14, 0.035, -0.2), Vector3(0.025, 0.025, 0.24), "navy")
 	_drawer_cup = _group(_drawer_slide, "Emergency backup mug", Vector3(0.07, 0.12, 0.15))
 	_drawer_cup.set_meta("interaction_id", "cup")
-	_drawer_cup.set_meta("display_name", "Take cup")
+	_drawer_cup.set_meta("display_name", "Take the cup.")
 	_make_pickup_cup(_drawer_cup, false)
 	_drawer_cup.visible = false
 	_set_prop_collision(_drawer_cup, false)
@@ -602,6 +861,8 @@ func _chair(parent: Node3D, pos: Vector3, yaw: float, upholstery: String) -> voi
 
 func _person(parent: Node3D, pos: Vector3, shirt: String, skin: String, hair: String, yaw: float, seated: bool) -> void:
 	var person := _group(parent, "Coworker", pos)
+	if parent.has_meta("interaction_id"):
+		people[str(parent.get_meta("interaction_id"))] = person
 	person.rotation_degrees.y = yaw
 	var offset: float = -0.25 if seated else 0.0
 	_box(person, "Torso", Vector3(0.0, 1.0 + offset, 0.0), Vector3(0.49, 0.58, 0.32), shirt)
@@ -661,7 +922,7 @@ func _sofa(parent: Node3D, pos: Vector3, yaw: float) -> void:
 	_box(sofa, "Throw pillow", Vector3(-1.0, 0.95, 0.19), Vector3(0.48, 0.48, 0.2), "coral")
 
 
-func _planter(parent: Node3D, pos: Vector3, size: float) -> void:
+func _planter(parent: Node3D, pos: Vector3, size: float) -> Node3D:
 	var plant := _group(parent, "Office plant", pos)
 	_cylinder(plant, "Pot", Vector3(0.0, size * 0.2, 0.0), size * 0.22, size * 0.4, "white")
 	_cylinder(plant, "Soil", Vector3(0.0, size * 0.405, 0.0), size * 0.2, 0.015, "hair")
@@ -671,6 +932,7 @@ func _planter(parent: Node3D, pos: Vector3, size: float) -> void:
 		var height: float = size * (0.55 + float(i % 3) * 0.23)
 		var leaf := _sphere(plant, "Leaf", Vector3(sin(angle) * size * 0.19, height, cos(angle) * size * 0.19), Vector3(size * 0.25, size * 0.54, size * 0.12), "leaf_light" if i % 2 == 0 else "green")
 		leaf.rotation_degrees = Vector3(28.0 * cos(angle), rad_to_deg(angle), 32.0 * sin(angle))
+	return plant
 
 
 func _shelf(parent: Node3D, pos: Vector3, yaw: float) -> void:
@@ -724,11 +986,12 @@ func _glass_partition(parent: Node3D, pos: Vector3, width: float, yaw: float) ->
 
 
 func _target(parent: Node3D, id: String, label: String, pos: Vector3, marker: Vector3) -> Node3D:
-	var target := _group(parent, label, pos)
+	var sentence: String = label if label.ends_with(".") else label + "."
+	var target := _group(parent, sentence, pos)
 	target.set_meta("interaction_id", id)
-	target.set_meta("display_name", label)
+	target.set_meta("display_name", sentence)
 	interaction_positions[id] = marker
-	interaction_labels[id] = label
+	interaction_labels[id] = sentence
 	return target
 
 

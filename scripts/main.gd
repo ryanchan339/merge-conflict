@@ -59,6 +59,10 @@ var coffee_drank: bool = false
 var coffee_boosted: bool = false
 var phone_scrolls: int = 0
 var phone_minutes: int = 0
+var conversation_id: String = ""
+var manager_sitting: bool = false
+var office_rewards: Dictionary = {}
+var web_drag_look: bool = false
 
 func _ready() -> void:
 	capture_mode = "--capture" in OS.get_cmdline_user_args()
@@ -103,6 +107,11 @@ func _process(delta: float) -> void:
 	if not is_instance_valid(hud) or not is_instance_valid(player):
 		return
 	var focus_text: String = player.focused_label if player.enabled else ""
+	if OS.has_feature("web") and player.enabled and not hud.is_modal_open():
+		if Input.mouse_mode != Input.MOUSE_MODE_CAPTURED and not web_drag_look:
+			web_drag_look = true
+			player.drag_look = true
+			hud.toast("Use arrow keys or hold the right mouse button to look.")
 	if player.enabled and focus_text.is_empty() and cup_state == "held_full":
 		focus_text = "F  ·  Drink coffee"
 	hud.set_focus(focus_text)
@@ -169,6 +178,23 @@ func _interact(id: String) -> void:
 	if id in ["fridge", "drawer", "cup", "coffee_machine"]:
 		_use_kitchen_object(id)
 		return
+	if id == "hr":
+		_start_conversation("hr")
+		if bool(flags.get("hr_resolved", false)):
+			_open_custom({"title":"Your report is on file.", "speaker":"Alex · People Operations", "body":"“We have recorded your concern. You can get back to your day; you do not need to file it again.”", "choices":[{"label":"Thank you for following up.", "effects":{}, "feedback":"", "next":""}]}, true)
+		else:
+			_open_card("hr_complaint", true)
+		return
+	if id == "manager_seat":
+		if STAGES[stage_index] == "manager":
+			_start_conversation("manager")
+			_open_card("manager")
+		else:
+			hud.toast("Jordan will be ready for your scheduled 1:1.")
+		return
+	if id in ["printer", "vending_machine", "snack", "water_cooler", "whiteboard", "water_plant"]:
+		_use_office_object(id)
+		return
 	var stage: String = STAGES[stage_index]
 	if id == "kitchen" and stage == "kitchen":
 		if coffee_drank:
@@ -177,6 +203,8 @@ func _interact(id: String) -> void:
 			hud.toast("Grab a cup, use the machine, then F to drink.")
 		return
 	if id == str(STAGE_TARGETS[stage]):
+		if id in ["standup", "mentor", "intern", "manager"]:
+			_start_conversation(id)
 		if stage == "exit":
 			_finish_day()
 		elif stage == "review_info":
@@ -189,12 +217,16 @@ func _interact(id: String) -> void:
 			_open_card(stage)
 		return
 	var chatter: Dictionary = {"mentor":"Maya: “Clear questions. Small changes. More coffee.”", "manager":"Jordan: “Let's catch up at your 1:1.”", "standup":"This meeting could have been a message.", "kitchen":"A perfectly normal dependency on coffee.", "intern":"Sam: “Seventeen tabs. One might be documentation.”", "exit":"Finish your task before heading home."}
-	hud.toast(str(chatter.get(id, "Back to it.")))
+	if id in ["mentor", "manager", "standup", "intern"]:
+		_start_conversation(id)
+		_open_custom({"title":"A quick catch-up.", "speaker":office.target_label(id), "body":str(chatter[id]), "choices":[{"label":"I'll let you get back to work.", "effects":{}, "feedback":"", "next":""}]}, true)
+	else:
+		hud.toast(str(chatter.get(id, "Back to it.")))
 
-func _open_card(id: String) -> void:
+func _open_card(id: String, is_ambient: bool = false) -> void:
 	current_card_id = id
 	current_card = Story.card(id)
-	ambient = false
+	ambient = is_ambient
 	pending_next = ""
 	pending_advance = false
 	decision_open = true
@@ -236,7 +268,8 @@ func _choose(index: int) -> void:
 			stats[key] = clampi(int(stats[key]) + int(effects[key]), 0, 100)
 		else:
 			flags[key] = effects[key]
-	if not ambient:
+	phone_minutes += int(choice.get("minutes", 0))
+	if not ambient or current_card_id.begins_with("hr_"):
 		evidence.append({"task":str(current_card.get("title", "")), "decision":str(choice.get("label", "")), "feedback":str(choice.get("feedback", ""))})
 	pending_next = str(choice.get("next", ""))
 	pending_advance = not ambient
@@ -255,9 +288,10 @@ func _continue() -> void:
 	if not pending_next.is_empty():
 		var next_id: String = pending_next
 		pending_next = ""
-		_open_card(next_id)
+		_open_card(next_id, ambient)
 		return
 	hud.hide_modal()
+	_end_conversation()
 	if pending_advance:
 		pending_advance = false
 		_set_stage(stage_index + 1)
@@ -305,6 +339,7 @@ func _finish_day() -> void:
 	incident_active = false
 	player.set_active(false)
 	hud.set_incident(0, false)
+	_update_hud()
 	var result: Dictionary = Story.ending(stats, flags)
 	hud.show_ending(result, stats, evidence)
 	if not capture_mode and not test_mode:
@@ -312,6 +347,90 @@ func _finish_day() -> void:
 		if file != null:
 			file.store_string(JSON.stringify({"stats":stats, "flags":flags, "result":result, "evidence":evidence}, "\t"))
 	_play_tone(780.0, 0.22, 0.07)
+
+func _start_conversation(id: String) -> void:
+	conversation_id = id
+	manager_sitting = id == "manager"
+	player.set_active(false)
+	player.camera_locked = true
+	held_cup.visible = false
+	hud.set_conversation(true)
+	var face: Vector3 = office.conversation_position(id)
+	var eye: Vector3 = player.camera.global_position
+	if manager_sitting:
+		eye = office.manager_seat_eye
+	var forward: Vector3 = (face - eye).normalized()
+	var right: Vector3 = forward.cross(Vector3.UP).normalized()
+	var aim: Vector3 = face + right * eye.distance_to(face) * 0.25
+	var target := Transform3D(Basis.IDENTITY, eye).looking_at(aim, Vector3.UP)
+	if is_instance_valid(camera_tween):
+		camera_tween.kill()
+	camera_tween = create_tween().set_parallel(true).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
+	camera_tween.tween_property(player.camera, "global_transform", target, 0.36)
+	camera_tween.tween_property(player.camera, "fov", 61.0, 0.36)
+	office.face_person(id, eye)
+
+func _end_conversation() -> void:
+	if conversation_id.is_empty():
+		return
+	if is_instance_valid(camera_tween):
+		camera_tween.kill()
+	var face: Vector3 = office.conversation_position(conversation_id)
+	if manager_sitting:
+		player.global_position = office.manager_stand_position
+	var direction: Vector3 = face - player.global_position
+	player.rotation = Vector3(0, atan2(-direction.x, -direction.z), 0)
+	player.camera.position = Vector3(0, 1.66, 0)
+	player.camera.rotation = Vector3.ZERO
+	player.camera.fov = 78.0
+	player.camera_locked = false
+	conversation_id = ""
+	manager_sitting = false
+	held_cup.visible = cup_state in ["held", "held_full"]
+	hud.set_conversation(false)
+
+func _use_office_object(id: String) -> void:
+	match id:
+		"printer":
+			if office.printer_jammed:
+				office.clear_printer()
+				_office_reward("printer", {"quality":3}, 3)
+				hud.toast("You cleared the jam. The printer resumes its one job.")
+			else:
+				office.print_page()
+				hud.toast("Your page says: this could have been a PDF.")
+		"vending_machine":
+			if office.snack_available:
+				hud.toast("Your snack is waiting in the tray.")
+			else:
+				office.dispense_snack()
+				hud.toast("Your snack has passed the deployment pipeline.")
+		"snack":
+			if office.snack_available:
+				office.take_snack()
+				_office_reward("snack", {"energy":6}, 2)
+				hud.toast("You ate the snack. No sprint planning required.")
+		"water_cooler":
+			office.use_water_cooler()
+			_office_reward("water", {"energy":4}, 1)
+			hud.toast("You drank some water. Your kidneys approve.")
+		"whiteboard":
+			office.update_whiteboard()
+			_office_reward("whiteboard", {"quality":2}, 2)
+			hud.toast("You moved the mystery ticket into Needs clarification.")
+		"water_plant":
+			office.water_plant()
+			_office_reward("plant", {"energy":3}, 1)
+			hud.toast("You watered the office plant. Its performance review improves.")
+	_update_hud()
+
+func _office_reward(id: String, effects: Dictionary, minutes: int) -> void:
+	if office_rewards.has(id):
+		return
+	office_rewards[id] = true
+	phone_minutes += minutes
+	for key: String in effects:
+		stats[key] = clampi(int(stats[key]) + int(effects[key]), 0, 100)
 
 func _sit_down(pick_up_phone: bool = false) -> void:
 	if seated or finished:
@@ -531,7 +650,10 @@ func _restart() -> void:
 
 func _quit() -> void:
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
-	get_tree().quit()
+	if OS.has_feature("web"):
+		_restart()
+	else:
+		get_tree().quit()
 
 func _play_tone(frequency: float, duration: float, volume: float) -> void:
 	if capture_mode or test_mode:
@@ -572,6 +694,22 @@ func _capture_sequence() -> void:
 	player.rotation.y = 0.0
 	await get_tree().create_timer(0.3).timeout
 	await _save_capture("02-office")
+	_set_stage(6)
+	_interact("manager_seat")
+	await get_tree().create_timer(0.5).timeout
+	await _save_capture("10-manager-meeting")
+	_choose(0)
+	_continue()
+	_choose(0)
+	_continue()
+	player.global_position = Vector3(1.1, 0, -7.2)
+	_interact("hr")
+	await get_tree().create_timer(0.5).timeout
+	await _save_capture("11-hr-complaint")
+	_choose(2)
+	_continue()
+	_choose(0)
+	_continue()
 	_set_stage(2)
 	_sit_down()
 	await get_tree().create_timer(0.6).timeout

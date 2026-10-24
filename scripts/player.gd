@@ -13,6 +13,7 @@ var walk_distance: float = 0.0
 var energy: int = 75
 var _step_timer: float = 0.0
 var camera_locked: bool = false
+var drag_look: bool = false
 
 func _ready() -> void:
 	name = "Player"
@@ -38,7 +39,7 @@ func _ready() -> void:
 func _unhandled_input(event: InputEvent) -> void:
 	if not enabled:
 		return
-	if event is InputEventMouseMotion and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
+	if event is InputEventMouseMotion and (Input.mouse_mode == Input.MOUSE_MODE_CAPTURED or (drag_look and Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT))):
 		rotate_y(-event.relative.x * look_sensitivity)
 		camera.rotation.x = clampf(camera.rotation.x - event.relative.y * look_sensitivity, -1.25, 1.25)
 	if event is InputEventKey and event.pressed and not event.echo and event.physical_keycode == KEY_E:
@@ -58,9 +59,12 @@ func _physics_process(delta: float) -> void:
 		velocity.y -= 20.0 * delta
 	var direction := Vector3.ZERO
 	if enabled:
+		if drag_look:
+			rotate_y((float(Input.is_physical_key_pressed(KEY_LEFT)) - float(Input.is_physical_key_pressed(KEY_RIGHT))) * delta * 1.8)
+			camera.rotation.x = clampf(camera.rotation.x + (float(Input.is_physical_key_pressed(KEY_UP)) - float(Input.is_physical_key_pressed(KEY_DOWN))) * delta * 1.3, -1.25, 1.25)
 		var axes := Vector2(
-			float(Input.is_physical_key_pressed(KEY_D) or Input.is_physical_key_pressed(KEY_RIGHT)) - float(Input.is_physical_key_pressed(KEY_A) or Input.is_physical_key_pressed(KEY_LEFT)),
-			float(Input.is_physical_key_pressed(KEY_S) or Input.is_physical_key_pressed(KEY_DOWN)) - float(Input.is_physical_key_pressed(KEY_W) or Input.is_physical_key_pressed(KEY_UP)))
+			float(Input.is_physical_key_pressed(KEY_D) or (not drag_look and Input.is_physical_key_pressed(KEY_RIGHT))) - float(Input.is_physical_key_pressed(KEY_A) or (not drag_look and Input.is_physical_key_pressed(KEY_LEFT))),
+			float(Input.is_physical_key_pressed(KEY_S) or (not drag_look and Input.is_physical_key_pressed(KEY_DOWN))) - float(Input.is_physical_key_pressed(KEY_W) or (not drag_look and Input.is_physical_key_pressed(KEY_UP))))
 		direction = (transform.basis * Vector3(axes.x, 0, axes.y)).normalized()
 	var sprint_speed: float = 6.5 if energy >= 25 else 4.7
 	var speed: float = sprint_speed if Input.is_physical_key_pressed(KEY_SHIFT) else 4.0
@@ -94,7 +98,7 @@ func _update_focus() -> void:
 
 func set_active(active: bool) -> void:
 	enabled = active
-	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED if active else Input.MOUSE_MODE_VISIBLE
+	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED if active and not drag_look else Input.MOUSE_MODE_VISIBLE
 	if not active:
 		velocity.x = 0
 		velocity.z = 0

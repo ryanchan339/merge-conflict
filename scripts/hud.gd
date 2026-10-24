@@ -7,6 +7,7 @@ signal restart_pressed
 signal quit_pressed
 
 const OfficeMap = preload("res://scripts/office_map.gd")
+const UIFont = preload("res://assets/fonts/Inter.ttf")
 const INK := Color("19333f")
 const CREAM := Color("f8f5e9")
 const MUTED := Color("5b7378")
@@ -25,6 +26,7 @@ var _crosshair: Label
 var _incident: PanelContainer
 var _incident_time: Label
 var _modal_layer: Control
+var _dim: ColorRect
 var _modal: PanelContainer
 var _stack: VBoxContainer
 var _toast_panel: PanelContainer
@@ -34,6 +36,11 @@ var _mode: String = ""
 var _choice_count: int = 0
 var _seated: bool = false
 var _stats: Dictionary = {}
+var _stats_layer: CanvasLayer
+var _stats_root: Control
+var _stats_panel: PanelContainer
+var _stat_values: Dictionary = {}
+var _conversation: bool = false
 
 
 func _ready() -> void:
@@ -42,9 +49,7 @@ func _ready() -> void:
 	_root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var theme := Theme.new()
-	var font := SystemFont.new()
-	font.font_names = PackedStringArray(["Segoe UI", "Arial"])
-	theme.default_font = font
+	theme.default_font = UIFont
 	theme.default_font_size = 18
 	theme.set_color("font_color", "Label", INK)
 	theme.set_color("font_color", "Button", INK)
@@ -59,6 +64,7 @@ func _ready() -> void:
 	add_child(_root)
 	_build_walk_hud()
 	_build_modal()
+	_build_persistent_stats()
 	set_status({}, "09:00", "")
 	set_objective("Welcome to Small Batch", "Find your team.")
 	get_viewport().size_changed.connect(_fit_modal)
@@ -68,7 +74,7 @@ func _build_walk_hud() -> void:
 	_objective = _panel(Color(0.07, 0.16, 0.20, 0.86), 12)
 	_root.add_child(_objective)
 	_objective.position = Vector2(28, 28)
-	_objective.size = Vector2(428, 88)
+	_objective.size = Vector2(392, 88)
 	var margin := _margin(17, 12, 17, 12)
 	_objective.add_child(margin)
 	var copy := VBoxContainer.new()
@@ -159,10 +165,10 @@ func _build_modal() -> void:
 	_modal_layer = Control.new()
 	_modal_layer.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_root.add_child(_modal_layer)
-	var dim := ColorRect.new()
-	dim.color = Color(0.03, 0.08, 0.10, 0.62)
-	dim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	_modal_layer.add_child(dim)
+	_dim = ColorRect.new()
+	_dim.color = Color(0.03, 0.08, 0.10, 0.62)
+	_dim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_modal_layer.add_child(_dim)
 	_modal = _panel(CREAM, 18)
 	_modal_layer.add_child(_modal)
 	var margin := _margin(27, 23, 27, 23)
@@ -174,9 +180,49 @@ func _build_modal() -> void:
 	_fit_modal()
 
 
+func _build_persistent_stats() -> void:
+	# This layer stays above the dialogue dimmer and the phone's layer 40.
+	_stats_layer = CanvasLayer.new()
+	_stats_layer.layer = 60
+	add_child(_stats_layer)
+	_stats_root = Control.new()
+	_stats_root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_stats_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_stats_root.theme = _root.theme
+	_stats_layer.add_child(_stats_root)
+	_stats_panel = _panel(Color(0.07, 0.16, 0.20, 0.96), 10)
+	_stats_panel.name = "PersistentStats"
+	_stats_root.add_child(_stats_panel)
+	_stats_panel.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP)
+	_stats_panel.offset_left = -280
+	_stats_panel.offset_right = 280
+	_stats_panel.offset_top = 28
+	_stats_panel.offset_bottom = 78
+	var margin := _margin(8, 9, 8, 9)
+	_stats_panel.add_child(margin)
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 18)
+	margin.add_child(row)
+	for key: String in ["delivery", "quality", "trust", "energy"]:
+		var cell := HBoxContainer.new()
+		cell.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		cell.add_theme_constant_override("separation", 8)
+		row.add_child(cell)
+		var name_label := _label(key.capitalize(), 14, Color("b4c9c5"))
+		name_label.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		cell.add_child(name_label)
+		var number := _label("50", 20, CREAM)
+		number.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		cell.add_child(number)
+		_stat_values[key] = number
+
+
 func set_status(stats: Dictionary, time_text: String, _chapter: String) -> void:
 	_stats = stats.duplicate(true)
 	_clock.text = time_text
+	for key: String in _stat_values:
+		var value: Label = _stat_values[key]
+		value.text = str(clampi(roundi(float(stats.get(key, 50))), 0, 100))
 
 
 func set_objective(title: String, detail: String) -> void:
@@ -203,6 +249,13 @@ func set_seated(active: bool) -> void:
 		_focus.hide()
 
 
+func set_conversation(active: bool) -> void:
+	_conversation = active
+	_crosshair.visible = not active and not _seated
+	_objective.visible = not active and not _seated
+	_fit_modal()
+
+
 func toast(text: String) -> void:
 	_toast_text.text = text
 	_toast_panel.show()
@@ -227,7 +280,7 @@ func show_card(card: Dictionary) -> void:
 	_choice_count = choices.size()
 	for index in range(choices.size()):
 		var choice: Dictionary = choices[index]
-		var button := _button("%d  %s" % [index + 1, str(choice.get("label", "Continue"))])
+		var button := _button("%d  %s" % [index + 1, str(choice.get("label", "Continue."))])
 		button.alignment = HORIZONTAL_ALIGNMENT_LEFT
 		button.pressed.connect(_emit_choice.bind(index))
 		content.add_child(button)
@@ -237,7 +290,7 @@ func show_feedback(text: String) -> void:
 	_open_modal("feedback")
 	var content := _scroll_content()
 	content.add_child(_body(text.split("\n\n")[0]))
-	var button := _button("Continue  →", true)
+	var button := _button("Continue.", true)
 	button.pressed.connect(func() -> void: continue_pressed.emit())
 	_stack.add_child(button)
 
@@ -246,21 +299,19 @@ func show_pause() -> void:
 	_open_modal("pause")
 	_stack.add_child(_title("Taking a breather."))
 	var content := _scroll_content()
-	content.add_child(_body("WASD move · Mouse look · Shift hurry · E interact"))
-	_add_stats(content, _stats)
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 10)
-	_stack.add_child(row)
-	var resume := _button("Resume", true)
-	resume.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var instructions: String = "Use WASD to walk, the mouse to look, Shift to hurry, and E to interact."
+	if OS.has_feature("web"):
+		instructions = "Use WASD to walk. Hold the right mouse button or use arrow keys to look when mouse capture is unavailable."
+	content.add_child(_body(instructions))
+	var resume := _button("Resume the game.", true)
 	resume.pressed.connect(func() -> void: resume_pressed.emit())
-	row.add_child(resume)
-	var restart := _button("Restart")
+	_stack.add_child(resume)
+	var restart := _button("Restart the day.")
 	restart.pressed.connect(func() -> void: restart_pressed.emit())
-	row.add_child(restart)
-	var quit_button := _button("Quit")
+	_stack.add_child(restart)
+	var quit_button := _button("Return to the title screen." if OS.has_feature("web") else "Quit the game.")
 	quit_button.pressed.connect(func() -> void: quit_pressed.emit())
-	row.add_child(quit_button)
+	_stack.add_child(quit_button)
 
 
 func show_ending(result: Dictionary, stats: Dictionary, evidence: Array) -> void:
@@ -286,11 +337,11 @@ func show_ending(result: Dictionary, stats: Dictionary, evidence: Array) -> void
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 12)
 	_stack.add_child(row)
-	var restart := _button("Play again", true)
+	var restart := _button("Play another day.", true)
 	restart.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	restart.pressed.connect(func() -> void: restart_pressed.emit())
 	row.add_child(restart)
-	var quit_button := _button("Clock out")
+	var quit_button := _button("Return to the title screen." if OS.has_feature("web") else "Clock out.")
 	quit_button.pressed.connect(func() -> void: quit_pressed.emit())
 	row.add_child(quit_button)
 
@@ -327,11 +378,17 @@ func _fit_modal() -> void:
 	if _mode == "feedback":
 		height = 220.0
 	elif _mode == "pause":
-		height = 290.0
+		height = 380.0
 	elif _mode == "ending":
 		height = 560.0
 	var panel_size := Vector2(minf(760.0, viewport_size.x - 64.0), minf(height, viewport_size.y - 100.0))
-	_modal.position = (viewport_size - panel_size) * 0.5
+	var conversation_layout: bool = _conversation and viewport_size.x >= 1100 and _mode in ["choice", "feedback"]
+	_dim.color.a = 0.12 if conversation_layout else 0.62
+	if conversation_layout:
+		panel_size.x = viewport_size.x * 0.48
+		_modal.position = Vector2(viewport_size.x - panel_size.x - 28, (viewport_size.y - panel_size.y) * 0.5)
+	else:
+		_modal.position = (viewport_size - panel_size) * 0.5
 	_modal.size = panel_size
 
 

@@ -8,6 +8,7 @@ signal phone_requested
 signal task_requested
 
 const SIZE := Vector2i(1440, 810)
+const UIFont = preload("res://assets/fonts/Inter.ttf")
 const BG := Color("101d27")
 const PANEL := Color("1b2c38")
 const TEXT := Color("edf4ec")
@@ -57,9 +58,7 @@ func _build_desktop() -> void:
 	_root = Control.new()
 	_root.size = Vector2(SIZE)
 	var theme := Theme.new()
-	var font := SystemFont.new()
-	font.font_names = PackedStringArray(["Segoe UI", "Arial"])
-	theme.default_font = font
+	theme.default_font = UIFont
 	theme.default_font_size = 22
 	theme.set_color("font_color", "Label", TEXT)
 	theme.set_color("font_color", "Button", TEXT)
@@ -100,7 +99,7 @@ func _build_desktop() -> void:
 	_desktop_task.position = Vector2(108, 226)
 	_desktop_task.size = Vector2(1000, 42)
 	_root.add_child(_desktop_task)
-	var open_task := _button("[  ]   Open task", true)
+	var open_task := _button("Open my task.", true)
 	open_task.position = Vector2(108, 306)
 	open_task.size = Vector2(290, 76)
 	open_task.pressed.connect(_open_saved_task)
@@ -123,19 +122,19 @@ func _build_desktop() -> void:
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 12)
 	toolbar_margin.add_child(row)
-	var work := _button("[  ]  Task")
-	work.custom_minimum_size.x = 150
+	var work := _button("Open my task.")
+	work.custom_minimum_size.x = 205
 	work.pressed.connect(_open_saved_task)
 	row.add_child(work)
-	var phone := _button("▯  Loop")
-	phone.custom_minimum_size.x = 190
+	var phone := _button("Open Loop on my phone.")
+	phone.custom_minimum_size.x = 335
 	phone.pressed.connect(func() -> void: phone_requested.emit())
 	row.add_child(phone)
 	var space := Control.new()
 	space.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	row.add_child(space)
-	var stand := _button("Stand up  ↗")
-	stand.custom_minimum_size.x = 190
+	var stand := _button("Stand up from my desk.")
+	stand.custom_minimum_size.x = 325
 	stand.pressed.connect(func() -> void: close_requested.emit())
 	row.add_child(stand)
 	_cursor = _label("↖", 31, Color("c1ffdf"))
@@ -183,8 +182,9 @@ func show_card(card: Dictionary) -> void:
 	var name_label := _label("TASK  /  " + str(card.get("speaker", "BatchGPT")).split(" · ")[0], 17, TEAL)
 	name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	header.add_child(name_label)
-	var close := _button("—")
-	close.custom_minimum_size = Vector2(50, 33)
+	var close := _button("Return to the desktop.")
+	close.custom_minimum_size = Vector2(245, 39)
+	close.add_theme_font_size_override("font_size", 18)
 	close.pressed.connect(func() -> void: show_desktop(_task))
 	header.add_child(close)
 	var title := _label(str(card.get("title", "Your task")), 32, TEXT)
@@ -196,7 +196,7 @@ func show_card(card: Dictionary) -> void:
 	_choice_count = choices.size()
 	for index in range(choices.size()):
 		var choice: Dictionary = choices[index]
-		var button := _button(str(choice.get("label", "Continue")))
+		var button := _button(str(choice.get("label", "Continue working.")))
 		button.custom_minimum_size.y = 66
 		button.alignment = HORIZONTAL_ALIGNMENT_LEFT
 		button.pressed.connect(_select.bind(index))
@@ -212,7 +212,7 @@ func show_feedback(text: String) -> void:
 	_window_stack.add_child(_label("TASK UPDATE", 17, TEAL))
 	var content := _scroll_content()
 	content.add_child(_body(text.split("\n\n")[0]))
-	var next := _button("Continue  →", true)
+	var next := _button("Continue working.", true)
 	next.pressed.connect(func() -> void: continue_pressed.emit())
 	_window_stack.add_child(next)
 
