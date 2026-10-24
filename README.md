@@ -31,7 +31,9 @@ To edit the game, import `project.godot` into Godot, or run:
 
 Follow the objective at the upper left. Approach a person or object and look at it to see its action. Delivery, quality, trust, and energy stay visible at the top, including during conversations and phone use. Choices use full sentences. Coworkers turn toward you, and dialogue leaves their face visible beside the choices. For your 1:1, interact with the visitor chair or Jordan to sit across the desk, then stand automatically when the meeting ends.
 
-At your desk, interact with the chair or workstation to sit down. Click choices directly on the 3D monitor. The screen's **Loop** button picks up your phone; you can also approach the physical phone on the desk. Scroll the fictional short-video feed, like a clip, and put it down to return to work. Every five posts costs ten game minutes and two delivery points.
+Your computer is the main task hub. Sit down and use **Slack**, **Changes**, and **BatchGPT** on the physical monitor. Slack contains the workday's messages from Maya, Sam, Jordan, and the pager bot. Changes tracks **CR #104** from draft through submission, review comments, and merge. After generating the feature, explicitly push the CR and request review. When Maya leaves comments, decide whether to ask her in person, check the cases at your desk, or merge early and deal with a follow-up. Drafts resume when you return to your desk. A choice to ask someone in person stays pending until you actually speak to them.
+
+Click choices directly on the monitor. Gains and losses appear after each choice, using the actual stat change at the 0–100 limits. The screen's **Loop** button picks up your phone; you can also approach the physical phone on the desk. Scroll the fictional short-video feed, like a clip, and put it down to return to work. Every five posts costs ten game minutes and two delivery points.
 
 In the kitchenette, open the refrigerator and slide out the drawer. Take a cup from the counter or open drawer, put it under the coffee machine, wait for it to brew, pick it up, and press **F** to drink. The first coffee restores 12 energy. The objective tracks your next step.
 
@@ -44,10 +46,10 @@ Explore the office to clear the printer jam, vend and pick up a snack, get water
 One compressed **final internship day**, taking roughly 10–15 minutes depending on reading and exploration:
 
 1. Give your standup update.
-2. Walk to Maya's desk and clarify an ambiguous feature.
-3. Sit at your workstation and click an instruction for BatchGPT on the monitor.
-4. Ask Maya about review feedback, then decide how thoroughly to test.
-5. Help Sam, or protect your own deadline.
+2. Read Maya's ticket in Slack and choose how to clarify it.
+3. Give BatchGPT instructions, then push your change request for review.
+4. Receive Maya's CR comments; ask beforehand, test, or merge early.
+5. Read Sam's Slack request and help in person, or protect your own deadline.
 6. Meet Jordan for your 1:1: own a mistake and choose project scope.
 7. Make a coffee, then decide whether to rest or work late.
 8. Respond to a severity page: sprint to your desk and solve an accessible incident puzzle.
@@ -67,7 +69,7 @@ The AI assistant is authored satire with predefined outcomes. There is no live m
 | `scripts/office.gd` | Procedural office geometry, furniture, coworkers, targets |
 | `scripts/player.gd` | First-person movement, camera, collision, interaction ray |
 | `scripts/hud.gd` | Minimal objectives, compact dialogue, pause, evaluation |
-| `scripts/workstation.gd` | Interactive desktop rendered onto the physical monitor |
+| `scripts/workstation.gd` | Slack feed, change requests, AI tickets, and desktop rendered onto the physical monitor |
 | `scripts/phone.gd` | Loop, a local animated short-video feed |
 | `scripts/office_map.gd` | Optional floor-map component, hidden in the minimal HUD |
 | `content/story.gd` | Editable dialogue, choices, effects, offer rules |
