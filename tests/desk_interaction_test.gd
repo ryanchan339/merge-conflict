@@ -58,6 +58,10 @@ func _run() -> void:
 	_check(int(game.stats.quality) == int(before.quality) + 15, "Prompt click applies quality exactly once")
 	_check(int(game.stats.trust) == int(before.trust) + 5, "Prompt click applies trust exactly once")
 	_check(int(game.stats.energy) == int(before.energy) - 6, "Prompt click applies energy exactly once")
+	var feedback_labels: Array[String] = []
+	for label: Node in game.computer._window.find_children("*", "Label", true, false):
+		feedback_labels.append(str(label.text))
+	_check("Delivery +14" in feedback_labels and "Quality +15" in feedback_labels and "Trust +5" in feedback_labels and "Energy -6" in feedback_labels, "Physical monitor feedback displays the gains and loss from the clicked prompt")
 	_check(game.evidence.size() == 1 and not game.decision_open and game.pending_advance, "One click submits one decision and opens feedback")
 	var applied: Dictionary = game.stats.duplicate(true)
 	var next: Button = _find_button(game.computer._window, "Continue working.")

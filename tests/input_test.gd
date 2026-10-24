@@ -68,6 +68,10 @@ func _run() -> void:
 	_check(int(game.stats.quality) == int(before_stats.quality) + 3, "Standup quality effect applies once")
 	_check(int(game.stats.trust) == int(before_stats.trust) + 10, "Standup trust effect applies once")
 	_check(game.evidence.size() == 1, "One input creates one decision record")
+	var feedback_labels: Array[String] = []
+	for label: Node in game.hud._modal.find_children("*", "Label", true, false):
+		feedback_labels.append(str(label.text))
+	_check("Delivery +6" in feedback_labels and "Quality +3" in feedback_labels and "Trust +10" in feedback_labels, "Dialogue feedback shows the actual gains after choosing")
 	var applied_stats: Dictionary = game.stats.duplicate(true)
 	await _tap(KEY_1)
 	_check(game.stats == applied_stats and game.evidence.size() == 1, "Numeric input on feedback cannot apply a choice twice")
@@ -76,6 +80,18 @@ func _run() -> void:
 	_check(game.stats == applied_stats, "Advancing does not apply effects again")
 	await _tap(KEY_ENTER)
 	_check(game.stage_index == stage_before + 1, "Extra Enter in the office does not skip a task")
+	game.stats.quality = 98
+	game.stats.energy = 2
+	game.stats.trust = 100
+	game._open_custom({"title":"Boundary check", "choices":[{"label":"I will test the limits.", "effects":{"quality":10, "energy":-10, "trust":10}, "feedback":""}]}, true)
+	await _tap(KEY_1)
+	feedback_labels.clear()
+	for label: Node in game.hud._modal.find_children("*", "Label", true, false):
+		feedback_labels.append(str(label.text))
+	_check(game.hud.is_modal_open() and "Quality +2" in feedback_labels and "Energy -2" in feedback_labels, "Feedback without narrative still shows the real clamped gains and losses")
+	_check("Quality +10" not in feedback_labels and "Trust +10" not in feedback_labels, "Feedback never claims points blocked by the 100-point cap")
+	await _tap(KEY_ENTER)
+	_check(game.stage_index == stage_before + 1 and not game.hud.is_modal_open(), "Continuing an optional stat-only choice preserves the assignment")
 	_finish()
 
 
