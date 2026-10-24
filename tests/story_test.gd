@@ -7,7 +7,8 @@ const STAT_NAMES: Array[String] = ["delivery", "quality", "trust", "energy"]
 const REQUIRED_CARDS: Array[String] = [
 	"welcome", "standup", "mentor", "feature", "review", "intern",
 	"manager", "manager_scope", "kitchen", "incident", "debrief",
-	"hr_complaint", "hr_coffee", "hr_meeting", "hr_crunch"
+	"hr_complaint", "hr_coffee", "hr_meeting", "hr_crunch",
+	"inbox_mentor", "push_cr", "review_notice", "review_context", "review_followup", "intern_help", "waiting_maya", "waiting_sam"
 ]
 const DAY_SEQUENCE: Array[String] = [
 	"standup", "mentor", "feature", "review", "intern", "manager", "kitchen", "incident"

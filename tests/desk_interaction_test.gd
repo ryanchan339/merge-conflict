@@ -12,7 +12,7 @@ func _initialize() -> void:
 
 
 func _run() -> void:
-	create_timer(20.0).timeout.connect(_timeout)
+	create_timer(45.0).timeout.connect(_timeout)
 	var scene: PackedScene = load("res://scenes/main.tscn")
 	game = scene.instantiate()
 	root.add_child(game)
@@ -70,8 +70,19 @@ func _run() -> void:
 		_finish()
 		return
 	await _click_monitor_button(next)
-	_check(game.stage_index == 3 and not game.computer.is_card_open(), "Physical Continue click advances to the review conversation")
-	_check(game.stats == applied and game.evidence.size() == 1, "Continuing preserves the single application of effects")
+	_check(game.stage_index == 2 and game.current_card_id == "push_cr", "After building, the monitor opens a draft CR instead of skipping submission")
+	_check(not bool(game.flags.get("cr_submitted", false)), "Draft CR is not submitted before its Push button is clicked")
+	var leave_draft: Button = _find_button(game.computer._root, "Stand up from my desk.")
+	await _click_monitor_button(leave_draft)
+	await _stand_near("desk", game.office.target_position("desk"))
+	await _tap(KEY_E)
+	await create_timer(0.55).timeout
+	_check(game.current_card_id == "push_cr" and game.stats == applied, "Returning to the desk resumes the draft without farming AI-prompt effects")
+	await _click_monitor_button(_find_button(game.computer._window, "I'll push CR #104 and request Maya's review."))
+	_check(bool(game.flags.get("cr_submitted", false)), "The physical Push button submits CR #104")
+	await _click_monitor_button(_find_button(game.computer._window, "Continue working."))
+	_check(game.stage_index == 3 and not game.computer.is_card_open(), "Submitting the CR unlocks the review notification")
+	_check(game.stats == applied and game.evidence.size() == 2, "Submission preserves feature effects and records its own action once")
 	var stand: Button = _find_button(game.computer._root, "Stand up from my desk.")
 	await _click_monitor_button(stand)
 	_check(not game.seated and game.player.enabled and not game.computer.active, "Physical Stand up button restores walking")
@@ -113,6 +124,46 @@ func _run() -> void:
 	await _tap(KEY_ESCAPE)
 	_check(not game.phone.is_open() and game.office._phone_root.visible, "Escape puts the phone back on the desk")
 	_check(game.seated and game.computer.active, "Closing the phone returns input to the seated computer")
+	await _click_monitor_button(game.computer._slack_button)
+	var slack_copy: String = ""
+	for label: Node in game.computer._window.find_children("*", "RichTextLabel", true, false):
+		slack_copy += str(label.text)
+	_check(slack_copy.contains("Maya") and slack_copy.contains("two comments"), "Slack shows the received CR-review message in its actual message feed")
+	await _click_monitor_button(_find_button(game.computer._window, "Open my current task."))
+	_check(game.current_card_id == "review_notice" and game.card_on_computer, "Opening the message leads to actionable review comments on the computer")
+	await _click_monitor_button(_find_button(game.computer._window, "I'll ask Maya in person before I merge anything."))
+	await _click_monitor_button(_find_button(game.computer._window, "Continue working."))
+	_check(not game.seated and game.awaiting_person == "mentor" and game.stage_index == 3, "Choosing to ask stands up and routes the assignment to Maya without advancing")
+	await _stand_near("desk", game.office.target_position("desk"))
+	await _tap(KEY_E)
+	await create_timer(0.55).timeout
+	_check(game.current_card_id == "waiting_maya" and not bool(game.flags.get("cr_merged", false)), "Returning early cannot bypass the chosen conversation or merge the CR")
+	await _click_monitor_button(_find_button(game.computer._window, "I'll go talk to Maya now."))
+	var maya_found: bool = await _stand_near("mentor", game.office.target_position("mentor"))
+	_check(maya_found, "Maya is physically reachable for the requested review clarification")
+	await _tap(KEY_E)
+	_check(game.current_card_id == "review_context" and game.conversation_id == "mentor", "E starts the review clarification face to face")
+	await _tap(KEY_1)
+	await _tap(KEY_ENTER)
+	_check(game.stage_index == 4 and bool(game.flags.get("review_context", false)), "Clarification unlocks testing and the merge decision")
+	await _stand_near("desk", game.office.target_position("desk"))
+	await _tap(KEY_E)
+	await create_timer(0.55).timeout
+	await _click_monitor_button(_find_button(game.computer._window, "I'll test all three cases, then merge CR #104."))
+	_check(bool(game.flags.get("cr_merged", false)) and bool(game.flags.get("tested", false)) and game.computer._cr_status == "Merged", "The reviewed merge records tests and updates the CR status")
+	await _click_monitor_button(_find_button(game.computer._window, "Continue working."))
+	await _click_monitor_button(_find_button(game.computer._root, "Open my task."))
+	_check(game.stage_index == 5 and game.current_card_id == "intern" and game.card_on_computer, "Sam's next help request arrives as a Slack task on the monitor")
+	game._stand_up()
+	game.flags = {"cr_submitted":true}
+	game._set_stage(3)
+	await _stand_near("desk", game.office.target_position("desk"))
+	await _tap(KEY_E)
+	await create_timer(0.55).timeout
+	await _click_monitor_button(_find_button(game.computer._window, "I'll merge now and deal with the comments later."))
+	await _click_monitor_button(_find_button(game.computer._window, "Continue working."))
+	await _click_monitor_button(_find_button(game.computer._root, "Open my task."))
+	_check(game.stage_index == 4 and game.current_card_id == "review_followup" and bool(game.flags.get("early_merge", false)), "An early merge leads to a follow-up task instead of pretending review happened")
 	game.hud.set_conversation(true)
 	game.hud.show_card({"title":"Let's discuss the feature.", "body":"Maya asks what you learned.", "choices":[{"label":"I checked the guest and signed-in cases."}]})
 	await process_frame
