@@ -8,15 +8,15 @@ const Workstation = preload("res://scripts/workstation.gd")
 const PocketPhone = preload("res://scripts/phone.gd")
 
 const STAGES: Array[String] = ["standup", "mentor", "feature", "review_info", "review", "intern", "manager", "kitchen", "incident", "exit"]
-const STAGE_TARGETS: Dictionary = {"standup":"standup", "mentor":"mentor", "feature":"desk", "review_info":"mentor", "review":"desk", "intern":"intern", "manager":"manager", "kitchen":"kitchen", "incident":"desk", "exit":"exit"}
+const STAGE_TARGETS: Dictionary = {"standup":"standup", "mentor":"desk", "feature":"desk", "review_info":"desk", "review":"desk", "intern":"desk", "manager":"manager", "kitchen":"kitchen", "incident":"desk", "exit":"exit"}
 const TIMES: Array[String] = ["09:05", "09:30", "10:00", "11:15", "11:30", "13:00", "14:30", "15:15", "15:17", "17:00"]
 const OBJECTIVES: Dictionary = {
 	"standup":["Join standup", "Meeting area, back right."],
-	"mentor":["Ask Maya", "Clarify the Save button."],
-	"feature":["Build the feature", "Sit at your desk and use the computer."],
-	"review_info":["Check with Maya", "She left a review comment."],
-	"review":["Finish your review", "Open the task on your computer."],
-	"intern":["Check on Sam", "The other intern needs a hand."],
+	"mentor":["Check your computer", "Maya sent you a Slack message."],
+	"feature":["Check your computer", "Your feature ticket is ready."],
+	"review_info":["Check your computer", "There is an update on your change request."],
+	"review":["Check your computer", "Your change request needs a decision."],
+	"intern":["Check your computer", "Sam sent you a Slack message."],
 	"manager":["Meet Jordan", "Your 1:1 is in the manager's office."],
 	"kitchen":["Make a coffee", "Take a cup. Brew. Drink."],
 	"incident":["Get to your desk", "Shift to run. Coffee checkout is down."],
@@ -63,6 +63,10 @@ var conversation_id: String = ""
 var manager_sitting: bool = false
 var office_rewards: Dictionary = {}
 var web_drag_look: bool = false
+var awaiting_person: String = ""
+var pending_visit: String = ""
+var work_card_id: String = ""
+var work_stage_index: int = -1
 
 func _ready() -> void:
 	capture_mode = "--capture" in OS.get_cmdline_user_args()
@@ -89,6 +93,7 @@ func _ready() -> void:
 	computer.close_requested.connect(_stand_up)
 	computer.phone_requested.connect(_open_phone)
 	computer.task_requested.connect(_desk_work)
+	computer.app_requested.connect(_desk_app)
 	phone = PocketPhone.new()
 	add_child(phone)
 	phone.closed.connect(_phone_closed)
@@ -116,7 +121,7 @@ func _process(delta: float) -> void:
 		focus_text = "F  ·  Drink coffee"
 	hud.set_focus(focus_text)
 	if stage_index >= 0:
-		var target_id: String = str(STAGE_TARGETS[STAGES[stage_index]])
+		var target_id: String = awaiting_person if not awaiting_person.is_empty() else str(STAGE_TARGETS[STAGES[stage_index]])
 		var target: Vector3 = office.target_position(target_id)
 		hud.set_distance(player.global_position.distance_to(target))
 		hud.minimap.player_position = player.global_position
@@ -196,6 +201,12 @@ func _interact(id: String) -> void:
 		_use_office_object(id)
 		return
 	var stage: String = STAGES[stage_index]
+	if not awaiting_person.is_empty() and id == awaiting_person:
+		awaiting_person = ""
+		_start_conversation(id)
+		_open_card("mentor" if stage == "mentor" else ("review_context" if stage == "review_info" else "intern_help"))
+		_update_hud()
+		return
 	if id == "kitchen" and stage == "kitchen":
 		if coffee_drank:
 			_open_card("kitchen")
@@ -207,8 +218,6 @@ func _interact(id: String) -> void:
 			_start_conversation(id)
 		if stage == "exit":
 			_finish_day()
-		elif stage == "review_info":
-			_open_custom({"title":"One tap. Zero purchases.", "speaker":"Maya", "body":"“Save should remember a drink, never buy it. Check guests and double taps before you ship.”", "choices":[{"label":"I'll check all three cases.", "hint":"", "effects":{"review_context":true}, "feedback":"Maya sends the checklist to your computer.", "next":""}]})
 		else:
 			if stage == "incident":
 				incident_active = false
@@ -230,7 +239,10 @@ func _open_card(id: String, is_ambient: bool = false) -> void:
 	pending_next = ""
 	pending_advance = false
 	decision_open = true
-	card_on_computer = seated and id in ["feature", "review", "incident"]
+	card_on_computer = seated
+	if card_on_computer:
+		work_card_id = id
+		work_stage_index = stage_index
 	player.set_active(false)
 	if card_on_computer:
 		computer.show_card(current_card)
@@ -270,6 +282,7 @@ func _choose(index: int) -> void:
 		else:
 			flags[key] = effects[key]
 	phone_minutes += int(choice.get("minutes", 0))
+	pending_visit = str(choice.get("visit", ""))
 	if not ambient or current_card_id.begins_with("hr_"):
 		evidence.append({"task":str(current_card.get("title", "")), "decision":str(choice.get("label", "")), "feedback":str(choice.get("feedback", ""))})
 	pending_next = str(choice.get("next", ""))
@@ -296,6 +309,16 @@ func _continue() -> void:
 		pending_next = ""
 		_open_card(next_id, ambient)
 		return
+	if not pending_visit.is_empty():
+		awaiting_person = pending_visit
+		pending_visit = ""
+		pending_advance = false
+		hud.hide_modal()
+		if seated:
+			_stand_up()
+		_update_hud()
+		hud.toast("Go talk to %s, then return to your computer." % ("Maya" if awaiting_person == "mentor" else "Sam"))
+		return
 	hud.hide_modal()
 	_end_conversation()
 	if pending_advance:
@@ -308,6 +331,10 @@ func _continue() -> void:
 		player.set_active(not finished)
 
 func _set_stage(index: int) -> void:
+	awaiting_person = ""
+	pending_visit = ""
+	work_card_id = ""
+	work_stage_index = -1
 	stage_index = clampi(index, 0, STAGES.size()-1)
 	_update_hud()
 	if STAGES[stage_index] == "incident":
@@ -322,6 +349,8 @@ func _update_hud() -> void:
 	if not is_instance_valid(hud):
 		return
 	player.energy = int(stats.energy)
+	if is_instance_valid(computer) and stage_index >= 0:
+		computer.set_work_state(STAGES[stage_index], flags, awaiting_person)
 	if stage_index < 0:
 		hud.set_status(stats, "09:00", "FINAL DAY · CLOCKING IN")
 		hud.set_objective("Your final day", "")
@@ -339,6 +368,8 @@ func _update_hud() -> void:
 		if stage == "incident" and int(stats.energy) < 25:
 			detail += " Low energy: your sprint is slower."
 		hud.set_objective(str(objective[0]), detail)
+		if not awaiting_person.is_empty():
+			hud.set_objective("Talk to Maya" if awaiting_person == "mentor" else "Talk to Sam", "You chose to ask in person.")
 
 func _finish_day() -> void:
 	finished = true
@@ -472,6 +503,8 @@ func _stand_up() -> void:
 		return
 	if pending_advance:
 		_continue()
+		if not seated:
+			return
 	if phone.is_open():
 		phone.close_phone()
 	if is_instance_valid(camera_tween):
@@ -499,15 +532,40 @@ func _desk_work() -> void:
 		_continue()
 		return
 	var stage: String = STAGES[stage_index]
-	if stage in ["feature", "review", "incident"]:
+	if not awaiting_person.is_empty():
+		_open_card("waiting_maya" if awaiting_person == "mentor" else "waiting_sam", true)
+		return
+	if stage in ["mentor", "feature", "review_info", "review", "intern", "incident"]:
 		if stage == "incident":
 			incident_active = false
 			incident_reached = true
 			hud.set_incident(0, false)
-		_open_card(stage)
+		if work_stage_index == stage_index and not work_card_id.is_empty():
+			_open_card(work_card_id)
+		else:
+			var card_id: String = str({"mentor":"inbox_mentor", "review_info":"review_notice"}.get(stage, stage))
+			if stage == "review" and bool(flags.get("early_merge", false)):
+				card_id = "review_followup"
+			_open_card(card_id)
 	else:
 		decision_open = false
 		computer.show_desktop(str(OBJECTIVES[stage][0]))
+
+func _desk_app(app: String) -> void:
+	if not seated or seating or phone.is_open():
+		return
+	var stage: String = STAGES[stage_index]
+	var task_app: String = "slack" if stage in ["mentor", "intern"] else ("ai" if stage == "feature" and work_card_id != "push_cr" else "changes")
+	if stage == "incident":
+		task_app = "changes"
+	if app == "slack":
+		computer.show_slack()
+	elif app == "task" or (app == task_app and stage in ["mentor", "feature", "review_info", "review", "intern", "incident"]):
+		_desk_work()
+	elif app == "changes":
+		computer.show_change_request()
+	else:
+		computer.show_ai_idle()
 
 func _open_phone() -> void:
 	if not seated or seating or phone.is_open():
@@ -716,6 +774,11 @@ func _capture_sequence() -> void:
 	_continue()
 	_choose(0)
 	_continue()
+	_set_stage(1)
+	_sit_down()
+	await get_tree().create_timer(0.5).timeout
+	await _save_capture("12-slack-ticket")
+	_stand_up()
 	_set_stage(2)
 	_sit_down()
 	await get_tree().create_timer(0.6).timeout
@@ -723,6 +786,13 @@ func _capture_sequence() -> void:
 	_choose(1)
 	await _save_capture("04-computer-feedback")
 	_continue()
+	await _save_capture("13-draft-change-request")
+	_choose(0)
+	_continue()
+	computer.show_slack()
+	await _save_capture("14-slack-inbox")
+	_desk_work()
+	await _save_capture("15-review-comments")
 	_open_phone()
 	await get_tree().create_timer(0.4).timeout
 	await _save_capture("05-phone")
@@ -784,8 +854,10 @@ func _smoke_test() -> void:
 		if seating:
 			await get_tree().create_timer(0.5).timeout
 		var guard: int = 0
-		while (hud.is_modal_open() or decision_open or pending_advance) and guard < 8:
-			if not pending_next.is_empty() or pending_advance:
+		while (hud.is_modal_open() or decision_open or pending_advance or not awaiting_person.is_empty()) and guard < 16:
+			if not awaiting_person.is_empty() and not decision_open and not hud.is_modal_open():
+				_interact(awaiting_person)
+			elif not pending_next.is_empty() or pending_advance:
 				_continue()
 			else:
 				var choices: Array = current_card.get("choices", [])

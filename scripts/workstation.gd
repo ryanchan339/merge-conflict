@@ -6,6 +6,7 @@ signal continue_pressed
 signal close_requested
 signal phone_requested
 signal task_requested
+signal app_requested(app: String)
 
 const SIZE := Vector2i(1440, 810)
 const UIFont = preload("res://assets/fonts/Inter.ttf")
@@ -31,6 +32,14 @@ var _feedback: bool = false
 var _last_card: Dictionary = {}
 var _task: String = "Your task"
 var _choice_count: int = 0
+var _messages: Array[Dictionary] = []
+var _notified: Dictionary = {}
+var _stage: String = ""
+var _cr_status: String = "Not started"
+var _cr_summary: Label
+var _slack_button: Button
+var _unread: int = 0
+var _app: String = ""
 
 
 func setup(surface: MeshInstance3D, camera: Camera3D) -> void:
@@ -92,7 +101,7 @@ func _build_desktop() -> void:
 	var status := _label("Workspace  /  Intern", 18, MUTED)
 	status.position = Vector2(1175, 11)
 	_root.add_child(status)
-	var greeting := _label("One thing at a time.", 44, TEXT)
+	var greeting := _label("Your inbox is your quest log.", 44, TEXT)
 	greeting.position = Vector2(105, 155)
 	_root.add_child(greeting)
 	_desktop_task = _label("Your task", 24, MUTED)
@@ -104,6 +113,19 @@ func _build_desktop() -> void:
 	open_task.size = Vector2(290, 76)
 	open_task.pressed.connect(_open_saved_task)
 	_root.add_child(open_task)
+	var inbox := _button("Open Slack.")
+	inbox.position = Vector2(420, 306)
+	inbox.size = Vector2(270, 76)
+	inbox.pressed.connect(_navigate_app.bind("slack"))
+	_root.add_child(inbox)
+	var changes := _button("Open Changes.")
+	changes.position = Vector2(712, 306)
+	changes.size = Vector2(290, 76)
+	changes.pressed.connect(_navigate_app.bind("changes"))
+	_root.add_child(changes)
+	_cr_summary = _label("CR #104  /  Not started", 23, TEAL)
+	_cr_summary.position = Vector2(108, 425)
+	_root.add_child(_cr_summary)
 	_window = _panel(PANEL, 17)
 	_window.position = Vector2(89, 74)
 	_window.size = Vector2(1262, 628)
@@ -120,23 +142,38 @@ func _build_desktop() -> void:
 	var toolbar_margin := _margin(9, 7, 9, 7)
 	toolbar.add_child(toolbar_margin)
 	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 12)
+	row.add_theme_constant_override("separation", 8)
 	toolbar_margin.add_child(row)
 	var work := _button("Open my task.")
-	work.custom_minimum_size.x = 205
+	work.custom_minimum_size.x = 190
 	work.pressed.connect(_open_saved_task)
 	row.add_child(work)
+	_slack_button = _button("Open Slack.")
+	_slack_button.custom_minimum_size.x = 145
+	_slack_button.pressed.connect(_navigate_app.bind("slack"))
+	row.add_child(_slack_button)
+	var cr_button := _button("Open Changes.")
+	cr_button.custom_minimum_size.x = 170
+	cr_button.pressed.connect(_navigate_app.bind("changes"))
+	row.add_child(cr_button)
+	var ai := _button("Use BatchGPT.")
+	ai.custom_minimum_size.x = 170
+	ai.pressed.connect(_navigate_app.bind("ai"))
+	row.add_child(ai)
 	var phone := _button("Open Loop on my phone.")
-	phone.custom_minimum_size.x = 335
+	phone.custom_minimum_size.x = 265
 	phone.pressed.connect(func() -> void: phone_requested.emit())
 	row.add_child(phone)
 	var space := Control.new()
 	space.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	row.add_child(space)
 	var stand := _button("Stand up from my desk.")
-	stand.custom_minimum_size.x = 325
+	stand.custom_minimum_size.x = 255
 	stand.pressed.connect(func() -> void: close_requested.emit())
 	row.add_child(stand)
+	for child: Node in row.get_children():
+		if child is Button:
+			(child as Button).add_theme_font_size_override("font_size", 19)
 	_cursor = _label("↖", 31, Color("c1ffdf"))
 	_cursor.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_cursor.add_theme_color_override("font_shadow_color", Color("0a141b"))
@@ -169,6 +206,10 @@ func show_desktop(task: String) -> void:
 
 
 func show_card(card: Dictionary) -> void:
+	_app = str(card.get("app", "changes"))
+	if _app == "slack":
+		_unread = 0
+		_refresh_inbox_badge()
 	_last_card = card.duplicate(true)
 	_task = str(card.get("title", _task))
 	_desktop_task.text = _task
@@ -179,7 +220,8 @@ func show_card(card: Dictionary) -> void:
 	_window.show()
 	var header := HBoxContainer.new()
 	_window_stack.add_child(header)
-	var name_label := _label("TASK  /  " + str(card.get("speaker", "BatchGPT")).split(" · ")[0], 17, TEAL)
+	var app_name: String = str({"slack":"SLACK  /  DIRECT MESSAGE", "changes":"CHANGES  /  CR #104  /  " + _cr_status.to_upper(), "ai":"BATCHGPT  /  FEATURE TICKET"}.get(_app, "WORKSPACE"))
+	var name_label := _label(app_name, 17, TEAL)
 	name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	header.add_child(name_label)
 	var close := _button("Return to the desktop.")
@@ -209,7 +251,7 @@ func show_feedback(text: String, changes: Dictionary = {}) -> void:
 	_feedback = true
 	_choice_count = 0
 	_window.show()
-	_window_stack.add_child(_label("TASK UPDATE", 17, TEAL))
+	_window_stack.add_child(_label("%s  /  UPDATE" % str({"slack":"SLACK", "changes":"CHANGES", "ai":"BATCHGPT"}.get(_app, "WORKSPACE")), 17, TEAL))
 	var content := _scroll_content()
 	if not text.is_empty():
 		content.add_child(_body(text.split("\n\n")[0]))
@@ -300,10 +342,83 @@ func _open_saved_task() -> void:
 	if _feedback:
 		_window.show()
 		return
-	if not _last_card.is_empty():
-		show_card(_last_card)
+	task_requested.emit()
+
+func _navigate_app(app: String) -> void:
+	if _feedback:
+		_window.show()
+		return
+	app_requested.emit(app)
+
+func set_work_state(stage: String, flags: Dictionary, _awaiting_person: String) -> void:
+	_stage = stage
+	if not _notified.has(stage):
+		_notified[stage] = true
+		var updates: Dictionary = {
+			"standup":["Jordan · #engineering", "Standup is in the meeting corner. Bring one update, not your entire autobiography."],
+			"mentor":["Maya · Direct message", "The Save favorites ticket is yours. Ask me about the requirements before you build."],
+			"feature":["Jordan · #feature-team", "Build the Save favorites change with BatchGPT, then push CR #104 for review."],
+			"review_info":["Maya · CR #104", "I left two comments. Please clarify Save and double-tap behavior before merging."],
+			"review":["Changes bot · #reviews", "CR #104 needs your response. Check the comments and decide whether to merge."],
+			"intern":["Sam · Direct message", "My discount applies twice. Finance has discovered negative-priced coffee. Can you help?"],
+			"manager":["Jordan · Direct message", "Our 1:1 is ready. Take the visitor chair in my office."],
+			"kitchen":["Jordan · #engineering", "Take a real break. The coffee machine is accepting dependencies."],
+			"incident":["Pager bot · #incidents", "SEV-1: Coffee checkout is down. Get to your desk and open the incident."],
+			"exit":["People Operations · Direct message", "Your evaluation is ready at the elevator. Please return all borrowed confidence."]
+		}
+		if updates.has(stage):
+			_messages.append({"sender":str(updates[stage][0]), "text":str(updates[stage][1])})
+			_unread += 1
+	_cr_status = "Merged" if bool(flags.get("cr_merged", false)) else ("Changes requested" if stage in ["review_info", "review"] else ("Review requested" if bool(flags.get("cr_submitted", false)) else ("Draft" if stage == "feature" else "Not started")))
+	_cr_summary.text = "CR #104  /  " + _cr_status
+	_refresh_inbox_badge()
+
+func _refresh_inbox_badge() -> void:
+	_slack_button.text = "Slack (%d)." % _unread if _unread > 0 else "Open Slack."
+
+func _read_only_window(app: String, title: String, body: String) -> void:
+	_app = app
+	_clear_window()
+	_card_open = false
+	_feedback = false
+	_choice_count = 0
+	_window.show()
+	var header := HBoxContainer.new()
+	_window_stack.add_child(header)
+	var app_label := _label(app.to_upper(), 17, TEAL)
+	app_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	header.add_child(app_label)
+	var close := _button("Return to the desktop.")
+	close.add_theme_font_size_override("font_size", 18)
+	close.custom_minimum_size = Vector2(245, 39)
+	close.pressed.connect(func() -> void: show_desktop(_task))
+	header.add_child(close)
+	_window_stack.add_child(_label(title, 30, TEXT))
+	var content := _scroll_content()
+	content.add_child(_body(body))
+	var action := _button("Open my current task.", true)
+	action.pressed.connect(func() -> void: app_requested.emit("task"))
+	_window_stack.add_child(action)
+
+func show_slack() -> void:
+	_unread = 0
+	_refresh_inbox_badge()
+	var body: String = ""
+	for index: int in range(maxi(0, _messages.size() - 3), _messages.size()):
+		var message: Dictionary = _messages[index]
+		body += "[b]%s[/b]\n%s\n\n" % [message["sender"], message["text"]]
+	_read_only_window("slack", "#engineering  /  Messages", body.strip_edges())
+
+func show_change_request() -> void:
+	var body: String = "[b]Status: %s[/b]\n\nSave remembers a favorite. Guests sign in. No coffee orders are placed.\n\n" % _cr_status
+	if _stage in ["review_info", "review", "intern", "manager", "kitchen", "incident", "exit"]:
+		body += "[b]Maya · Comment 1[/b]\nDoes Save only remember a drink, or can it place an order?\n\n[b]Maya · Comment 2[/b]\nWhat happens when a guest double-taps?"
 	else:
-		task_requested.emit()
+		body += "Maya is the assigned reviewer. Build the feature, then push the draft for review."
+	_read_only_window("changes", "CR #104  /  Save coffee favorites", body)
+
+func show_ai_idle() -> void:
+	_read_only_window("batchgpt", "BatchGPT is confidently standing by.", "Open your current feature ticket to give the AI instructions.\n\nBatchGPT cannot approve its own work, although it has written a compelling essay about why it should.")
 
 
 func _select(index: int) -> void:
