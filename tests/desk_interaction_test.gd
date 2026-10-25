@@ -57,6 +57,17 @@ func _run() -> void:
 	_check(game.stats == before_desktop_key, "Number keys on the desktop cannot choose a hidden app option")
 	await _click_monitor_button(_find_button(game.computer._root, "Open my task."))
 	_check(game.computer.is_card_open() and game.current_card_id == "feature", "Feature appears inside the monitor")
+	await _click_monitor_button(_find_button(game.computer._window, "Close this window."))
+	_check(not game.computer._window.visible and game.computer._menu_app.text == "Finder", "The visible X closes an unanswered app window to the desktop")
+	var before_closed_key: Dictionary = game.stats.duplicate(true)
+	await _tap(KEY_1)
+	_check(game.stats == before_closed_key and game.stage_index == 2, "Closing an unanswered prompt makes no decision and blocks hidden choices")
+	await _click_monitor_button(_find_button(game.computer._root, "Open my task."))
+	_check(game.current_card_id == "feature" and game.computer._window.visible, "The unchosen feature draft reopens after closing with X")
+	var decision_copy: String = ""
+	for label: Node in game.computer._window.find_children("*", "RichTextLabel", true, false):
+		decision_copy += str(label.text)
+	_check(decision_copy.contains(str(game.current_card["decision"])), "The computer displays the explicit decision question next to the backstory")
 
 	var before: Dictionary = game.stats.duplicate(true)
 	var options: Array = game.current_card.get("choices", [])
@@ -83,7 +94,11 @@ func _run() -> void:
 	if not is_instance_valid(next):
 		_finish()
 		return
-	await _click_monitor_button(next)
+	await _click_monitor_button(_find_button(game.computer._window, "Close this window."))
+	_check(not game.computer._window.visible and game.stats == applied, "X closes a submitted update without applying its effects again")
+	await _click_monitor_button(game.computer._slack_button)
+	_check(game.computer._app == "slack" and game.computer._window.visible, "Closing feedback does not force that old update to reopen when another app is chosen")
+	await _click_monitor_button(_find_button(game.computer._window, "Open my current task."))
 	_check(game.stage_index == 2 and game.current_card_id == "push_cr", "After building, the monitor opens a draft CR instead of skipping submission")
 	_check(not bool(game.flags.get("cr_submitted", false)), "Draft CR is not submitted before its Push button is clicked")
 	var leave_draft: Button = _find_button(game.computer._root, "Stand up from my desk.")

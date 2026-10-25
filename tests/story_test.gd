@@ -61,8 +61,9 @@ func _test_schema() -> void:
 	for card_id in REQUIRED_CARDS:
 		var current: Dictionary = cards[card_id]
 		_check(not current.is_empty(), "Missing required card: %s" % card_id)
-		for key in ["eyebrow", "title", "speaker", "body"]:
+		for key in ["eyebrow", "title", "speaker", "body", "decision"]:
 			_check(typeof(current.get(key)) == TYPE_STRING and not str(current.get(key, "")).is_empty(), "%s.%s must be a nonempty string." % [card_id, key])
+		_check(str(current.get("decision", "")).ends_with("?"), "%s needs an explicit decision question." % card_id)
 		_check(typeof(current.get("choices")) == TYPE_ARRAY, "%s.choices must be an array." % card_id)
 		var choices: Array = current.get("choices", [])
 		_check(choices.size() >= 1 and choices.size() <= 3, "%s must have 1–3 choices." % card_id)
