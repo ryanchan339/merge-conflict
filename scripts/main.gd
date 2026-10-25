@@ -285,7 +285,7 @@ func _choose(index: int) -> void:
 		computer.show_sandbox()
 		return
 	if current_card_id == "feature":
-		for key: String in ["checked_member", "checked_guest", "checked_double", "sandbox_complete", "sandbox_patch"]:
+		for key: String in ["checked_member", "checked_guest", "checked_double", "sandbox_complete", "sandbox_patch", "lab_guest_guard", "lab_write_target", "lab_deduplicate"]:
 			flags.erase(key)
 	if current_card_id == "intern" and index == 1:
 		flags["promised_sam"] = true
@@ -591,6 +591,12 @@ func _desk_app(app: String) -> void:
 	if not seated or seating or phone.is_open():
 		return
 	var stage: String = STAGES[stage_index]
+	if app == "source":
+		computer.show_source()
+		return
+	if app == "tests":
+		computer.show_test_runner()
+		return
 	if app == "sandbox":
 		computer.show_sandbox()
 		return
@@ -620,6 +626,11 @@ func _desk_app(app: String) -> void:
 func _sandbox_action(action: String) -> void:
 	if action.begins_with("pass:"):
 		flags["checked_" + action.trim_prefix("pass:")] = true
+	elif action.begins_with("edit:"):
+		var parts: PackedStringArray = action.split(":")
+		flags["lab_" + parts[1]] = parts[2] if parts[1] == "write_target" else parts[2] == "true"
+		for scenario: String in ["member", "guest", "double"]:
+			flags.erase("checked_" + scenario)
 	elif action == "patch":
 		flags["sandbox_patch"] = true
 		for scenario: String in ["member", "guest", "double"]:

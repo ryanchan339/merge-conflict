@@ -12,6 +12,7 @@ signal sandbox_action(action: String)
 
 const SIZE := Vector2i(1440, 810)
 const UIFont = preload("res://assets/fonts/Inter.ttf")
+const EngineeringLab = preload("res://content/engineering_lab.gd")
 const WorkspaceData = preload("res://content/workspace_data.gd")
 const BG := Color("101d27")
 const PANEL := Color("1b2c38")
@@ -77,6 +78,10 @@ var _active_chat: int = -1
 var _chat_input: LineEdit
 var _chat_pending: Dictionary = {}
 var _chat_mode: bool = false
+var _lab_program: RefCounted
+var _lab_signature: String = ""
+var _lab_report: Array[Dictionary] = []
+var _lab_file: String = "favorites.gd"
 var _sandbox_member: bool = true
 var _sandbox_last_tap: int = -10000
 var _sandbox_result: String = "Preview environment · No real orders"
@@ -718,7 +723,7 @@ func _build_sidebar(parent: Control, app: String) -> void:
 	var spacer := Control.new()
 	spacer.custom_minimum_size.y = 17
 	stack.add_child(spacer)
-	var links: Array = ["# engineering", "# reviews", "# incidents", "# triage", "Direct messages", "Maya", "Sam", "Jordan"] if app == "slack" else (["Change requests  5", "CR #104", "App preview", "Open", "Merged", "Closed", "Checks"] if app == "changes" else ["New chat", "Save favorites (task)"] + _chat_titles())
+	var links: Array = ["# engineering", "# reviews", "# incidents", "# triage", "Direct messages", "Maya", "Sam", "Jordan"] if app == "slack" else (["Change requests  5", "CR #104", "Source code", "Test runner", "App preview", "Checks"] if app == "changes" else ["New chat", "Save favorites (task)"] + _chat_titles())
 	for item: String in links:
 		var button := Button.new()
 		button.text = item
@@ -755,6 +760,10 @@ func _sidebar_action(app: String, item: String) -> void:
 				if _chats[index]["title"] == item:
 					show_ai_chat(index)
 					break
+	elif item == "Source code":
+		show_source()
+	elif item == "Test runner":
+		show_test_runner()
 	elif item == "App preview":
 		app_requested.emit("sandbox")
 	elif item == "CR #104":
@@ -831,6 +840,9 @@ func _browse_start(app: String, title: String) -> VBoxContainer:
 
 func _link(parent: Control, text: String, route: String) -> void:
 	var button := _button(text)
+	if parent is HBoxContainer:
+		button.custom_minimum_size.x = 230
+		button.add_theme_font_size_override("font_size", 18)
 	button.pressed.connect(func() -> void: app_requested.emit(route))
 	parent.add_child(button)
 
@@ -870,17 +882,22 @@ func show_slack(channel: String = "# engineering", route_task: bool = true) -> v
 		scroll.scroll_vertical = int(scroll.get_v_scroll_bar().max_value)
 
 func _current_cr() -> Dictionary:
-	var diff: String = "  When Save is clicked\n+ Remember the selected favorite\n+ Ask guests to sign in\n- Place a coffee order\n+ Ignore a repeated tap"
-	if not (_work_flags.get("tested", false) or _work_flags.get("sandbox_patch", false)):
-		if _work_flags.get("vague_prompt", false):
-			diff = "  When Save is clicked\n+ Remember the selected favorite\n+ Place a coffee order immediately\n  Guest and repeated-tap rules: not specified"
-		elif _work_flags.get("overbuilt", false):
-			diff = "  When Save is clicked\n+ Open the coffee metaverse\n+ Mint one virtual lid\n+ Post a drink to the social feed\n  Original favorites behavior: not verified"
-	return {"id":104, "title":"Save coffee favorites", "author":"You", "branch":"intern/save-favorites", "status":_cr_status, "added":32, "removed":4, "files":2, "comments":[["You", "Save remembers a favorite. It must never place an order."], ["Maya", "What happens when a guest double-taps? Please check before merging."]], "diff":diff, "checks":["Favorites: " + ("passed" if _work_flags.get("checked_member", false) else "pending"), "Guests: " + ("passed" if _work_flags.get("checked_guest", false) else "pending"), "Double-tap: " + ("passed" if _work_flags.get("checked_double", false) else "pending")]}
+	var record := {"id":104, "title":"Save coffee favorites", "author":"You", "branch":"intern/save-favorites", "status":_cr_status, "added":14, "removed":3, "files":2, "comments":[["Maya", "Save should not call the ordering path."], ["Maya", "Can a guest or a repeated request write data?"]], "diff":EngineeringLab.source(EngineeringLab.settings(_work_flags)), "checks":[]}
+	for scenario: String in ["member", "guest", "double"]:
+		record["checks"].append(scenario + ": " + ("passed" if _work_flags.get("checked_" + scenario, false) else "pending"))
+	return record
 
 func show_change_request(filter_status: String = "All") -> void:
 	var content := _browse_start("changes", "Change requests")
 	content.add_child(_label("coffee-app    /    5 changes    /    " + filter_status, 17, MUTED))
+	var filters := HBoxContainer.new()
+	content.add_child(filters)
+	for status: String in ["All", "Open", "Merged", "Closed"]:
+		var filter := _button(status)
+		filter.custom_minimum_size.x = 150
+		filter.add_theme_font_size_override("font_size", 17)
+		filter.pressed.connect(show_change_request.bind(status))
+		filters.add_child(filter)
 	var records: Array = [_current_cr()] + _cr_records
 	for record: Dictionary in records:
 		if filter_status != "All" and str(record["status"]) != filter_status:
@@ -933,15 +950,22 @@ func show_cr_detail(id: int, tab: String = "Conversation") -> void:
 	var content := _scroll_content()
 	if tab == "Files changed":
 		content.add_child(_label("%d files changed     +%d additions     −%d deletions" % [record["files"], record["added"], record["removed"]], 17, MUTED))
-		for line: String in str(record["diff"]).split("\n"):
-			content.add_child(_label(line, 20, Color("18734d") if line.begins_with("+") else (Color("bd3a4a") if line.begins_with("-") else _ink)))
+		if id == 104:
+			_code_block(content, str(record["diff"]))
+			_link(content, "Open in editor", "source")
+		else:
+			for line: String in str(record["diff"]).split("\n"):
+				content.add_child(_label(line, 20, Color("18734d") if line.begins_with("+") else (Color("bd3a4a") if line.begins_with("-") else _ink)))
 	elif tab == "Checks":
 		for check: String in record["checks"]:
 			_add_message(content, check)
+		if id == 104:
+			_link(content, "Run test suite", "tests")
 	else:
 		_cr_conversation(content, record, int(record["id"]) != 104 or _stage not in ["standup", "mentor", "feature"])
 
 func show_sandbox() -> void:
+	_lab_prepare()
 	var content := _browse_start("changes", "Coffee app · Preview")
 	content.add_child(_label("Signed in as you" if _sandbox_member else "Guest session", 18, TEAL))
 	var preview := _panel(Color("fff7e9"), 12)
@@ -968,6 +992,7 @@ func show_sandbox() -> void:
 	controls.add_child(session)
 	var reset := _button("Reset preview")
 	reset.pressed.connect(func() -> void:
+		_lab_program = null
 		_sandbox_orders = 0
 		_sandbox_favorites = 0
 		_sandbox_last_tap = -10000
@@ -984,50 +1009,135 @@ func show_sandbox() -> void:
 		content.add_child(fix)
 	_link(_window_stack, "Back to CR #104", "cr:104")
 
+func _lab_prepare() -> void:
+	var config := EngineeringLab.settings(_work_flags)
+	var signature: String = EngineeringLab.source(config)
+	if _lab_program == null or signature != _lab_signature:
+		_lab_signature = signature
+		_lab_program = EngineeringLab.program(config)
+		_sandbox_last_tap = -10000
+	if _lab_program != null:
+		_sandbox_favorites = _lab_program.get("favorites").size()
+		_sandbox_orders = _lab_program.get("orders").size()
+
 func _sandbox_save() -> void:
+	_lab_prepare()
+	if _lab_program == null:
+		_sandbox_result = "Build failed. Open the editor to inspect favorites.gd."
+		show_sandbox()
+		return
 	var repeated: bool = Time.get_ticks_msec() - _sandbox_last_tap < 900
 	_sandbox_last_tap = Time.get_ticks_msec()
-	var patched: bool = bool(_work_flags.get("sandbox_patch", false))
-	var clear: bool = bool(_work_flags.get("clear_prompt", false)) or patched
+	var before: int = _sandbox_favorites
+	var result: Dictionary = _lab_program.save_favorite("intern" if _sandbox_member else "", "flat_white", "preview-request")
+	_sandbox_favorites = _lab_program.get("favorites").size()
+	_sandbox_orders = _lab_program.get("orders").size()
 	if not _sandbox_member:
-		if clear:
+		if result["status"] == "sign_in" and int(result["charged"]) == 0 and before == _sandbox_favorites:
 			_sandbox_result = "Sign in to save a favorite. No order placed. PASS: guest check."
 			sandbox_action.emit("pass:guest")
 		else:
-			_sandbox_orders += 1
-			_sandbox_result = "BUG: a guest was charged $4 instead of seeing sign-in."
-	elif repeated and not patched:
-		_sandbox_favorites += 1
-		_sandbox_result = "BUG: the second tap created a duplicate favorite."
+			_sandbox_result = "BUG: guest wrote data or placed an order. See favorites.gd."
 	elif repeated:
-		_sandbox_result = "Already saved. Second tap ignored. No charge. PASS: double-tap check."
-		sandbox_action.emit("pass:double")
-	elif clear:
-		_sandbox_favorites = 1
+		if result["status"] == "already_saved" and before == _sandbox_favorites and int(result["charged"]) == 0:
+			_sandbox_result = "Repeated request ignored. PASS: double-tap check."
+			sandbox_action.emit("pass:double")
+		else:
+			_sandbox_result = "BUG: the second tap created another write. See seen_requests."
+	elif result["status"] == "saved" and int(result["charged"]) == 0:
 		_sandbox_result = "Favorite saved. No order placed. PASS: signed-in check."
 		sandbox_action.emit("pass:member")
 	else:
-		_sandbox_orders += 1
-		_sandbox_result = "BUG: Save placed an order and charged $4."
+		_sandbox_result = "BUG: Save charged $%d instead of only remembering a favorite." % int(result["charged"])
 	show_sandbox()
 
+func _lab_line(token: String) -> int:
+	var lines: PackedStringArray = EngineeringLab.source(EngineeringLab.settings(_work_flags)).split("\n")
+	for index: int in lines.size():
+		if lines[index].contains(token):
+			return index + 1
+	return 1
+
+func _code_block(parent: Control, code: String) -> void:
+	var panel := _panel(Color("18222e"), 8)
+	parent.add_child(panel)
+	var lines := VBoxContainer.new()
+	lines.add_theme_constant_override("separation", 2)
+	panel.add_child(lines)
+	var mono := SystemFont.new()
+	mono.font_names = PackedStringArray(["Consolas", "Liberation Mono", "monospace"])
+	var number: int = 1
+	for line: String in code.split("\n"):
+		var label := _label("%02d  %s" % [number, line.replace("\t", "    ")], 16, Color("d8e4ef"))
+		label.add_theme_font_override("font", mono)
+		if line.strip_edges().begins_with("func ") or line.strip_edges().begins_with("if "):
+			label.add_theme_color_override("font_color", Color("c2a7ff"))
+		elif line.contains("return "):
+			label.add_theme_color_override("font_color", Color("a5dfb0"))
+		lines.add_child(label)
+		number += 1
+
+func show_source() -> void:
+	var content := _browse_start("changes", "coffee-app / " + _lab_file)
+	var tabs := HBoxContainer.new()
+	content.add_child(tabs)
+	for file: String in ["favorites.gd", "favorites_test.gd", "README.md"]:
+		var button := _button(file)
+		button.custom_minimum_size.x = 210
+		button.add_theme_font_size_override("font_size", 16)
+		button.pressed.connect(func() -> void: _lab_file = file; show_source())
+		tabs.add_child(button)
+	if _lab_file == "README.md":
+		_add_message(content, "Ticket SB-104: signed-in people can remember a favorite drink. Guests must sign in. Save must never order or charge. A repeated request must not save twice.\n\nRun the tests, inspect the failure, make a small change, rerun, and attach the results to CR #104.")
+	elif _lab_file == "favorites_test.gd":
+		_code_block(content, EngineeringLab.test_source())
+	else:
+		_code_block(content, EngineeringLab.source(EngineeringLab.settings(_work_flags)))
+		var patch_options := VBoxContainer.new()
+		patch_options.add_theme_constant_override("separation", 4)
+		_window_stack.add_child(patch_options)
+		for patch: Array in [["guest_guard", "true", "Add guest guard: if user_id.is_empty(): return sign_in"], ["write_target", "favorites", "Change write: orders.append(drink) → favorites.append(drink)"], ["deduplicate", "true", "Add repeat guard: if seen_requests.has(request_id): return already_saved"]]:
+			var button := _button(str(patch[2]))
+			button.add_theme_font_size_override("font_size", 16)
+			button.custom_minimum_size.y = 35
+			button.pressed.connect(func() -> void:
+				sandbox_action.emit("edit:" + str(patch[0]) + ":" + str(patch[1]))
+				_lab_report.clear()
+				_sandbox_result = "Source updated. Rerun the tests against this revision."
+				show_source()
+			)
+			patch_options.add_child(button)
+	var actions := HBoxContainer.new()
+	_window_stack.add_child(actions)
+	_link(actions, "Run test suite", "tests")
+	_link(actions, "Open app preview", "sandbox")
+	_link(actions, "Back to CR #104", "cr:104")
+
+func show_test_runner(run: bool = true) -> void:
+	if run:
+		_lab_report = EngineeringLab.suite(EngineeringLab.settings(_work_flags))
+		for result: Dictionary in _lab_report:
+			if result["passed"]:
+				sandbox_action.emit("pass:" + str(result["case"]))
+	var content := _browse_start("changes", "Terminal · coffee-app")
+	_code_block(content, "$ run-tests tests/favorites_test.gd\nbranch: intern/save-favorites\nRunning isolated tests against favorites.gd…")
+	var passed: int = 0
+	for result: Dictionary in _lab_report:
+		if result["passed"]:
+			passed += 1
+		_plain_message(content, ("PASS" if result["passed"] else "FAIL") + "  test_" + str(result["case"]), "Expected: " + str(result["expected"]) + "\nReceived: " + str(result["actual"]), Color("eef8f0") if result["passed"] else Color("fff0ed"))
+	content.add_child(_label("%d passed, %d failed · %s" % [passed, 3 - passed, "Ready for review" if passed == 3 else "Build blocked"], 20, TEAL))
+	if passed == 3:
+		_plain_message(content, "Changes bot · Attached to CR #104", "Three passing checks attached to this revision. Maya can now review the evidence.", Color.WHITE)
+	var actions := HBoxContainer.new()
+	_window_stack.add_child(actions)
+	_link(actions, "Open source", "source")
+	_link(actions, "Run again", "tests")
+	_link(actions, "Back to CR #104", "cr:104")
+
 func _sandbox_fix_options() -> void:
-	var content := _browse_start("changes", "Edit Save behavior")
-	_add_message(content, "When someone taps Save:")
-	for rule: String in ["Remember a favorite; ask guests to sign in; ignore repeated taps.", "Place an order; treat each tap as a separate purchase.", "Hide Save from everyone so nobody can break it."]:
-		var button := _button(rule)
-		button.pressed.connect(func() -> void:
-			if rule.begins_with("Remember"):
-				sandbox_action.emit("patch")
-				_sandbox_favorites = 0
-				_sandbox_orders = 0
-				_sandbox_last_tap = -10000
-				_sandbox_result = "Small fix applied. Run all three checks again."
-			else:
-				_sandbox_result = "That rule still fails the ticket. Favorites should save without purchases."
-			show_sandbox()
-		)
-		content.add_child(button)
+	_lab_file = "favorites.gd"
+	show_source()
 
 func show_ai_idle() -> void:
 	show_ai_chat(_active_chat)
@@ -1182,23 +1292,18 @@ func _cr_conversation(parent: Control, record: Dictionary, reviewed: bool) -> vo
 	elif bool(_work_flags.get("overbuilt", false)):
 		description = "AI-generated favorites update, plus a social feed, virtual lids, and coffee coins. The original Save behavior is somewhere in the 34 new screens."
 	_plain_message(parent, str(record["author"]) + " opened this change · Original description", description if int(record["id"]) == 104 else str(record["title"]), Color.WHITE)
-	var code := _panel(Color("f0f3f6"), 7)
-	parent.add_child(code)
-	var lines := VBoxContainer.new()
-	lines.add_theme_constant_override("separation", 4)
-	code.add_child(lines)
-	lines.add_child(_label("drink_page / Save behavior", 16, MUTED))
-	for line: String in str(record["diff"]).split("\n"):
-		var label := _label(line, 18, Color("18734d") if line.begins_with("+") else (Color("bd3a4a") if line.begins_with("-") else _ink))
-		label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		lines.add_child(label)
+	if int(record["id"]) == 104:
+		parent.add_child(_label("favorites.gd · Proposed revision", 16, MUTED))
+		_code_block(parent, str(record["diff"]))
+	else:
+		_add_message(parent, str(record["diff"]))
 	if int(record["id"]) != 104:
 		for comment: Array in record["comments"]:
 			_plain_message(parent, str(comment[0]) + " commented", str(comment[1]), Color.WHITE)
 		return
 	if reviewed:
-		_plain_message(parent, "Maya requested changes · Save behavior", "Does Save only remember a favorite, or can this path also place an order? Please attach a check showing that nobody is charged.", Color("fff9ed"))
-		_plain_message(parent, "Maya · Guest and repeated taps · Unresolved" if not _work_flags.get("tested", false) else "Maya · Guest and repeated taps · Resolved", "What happens when a guest taps Save twice? Please check signed-in, signed-out, and double-tap behavior before merging.", Color("fff9ed"))
+		_plain_message(parent, "Maya requested changes · favorites.gd:%d · append(drink)" % _lab_line(".append(drink)"), "Does Save only remember a favorite, or can this path also place an order? Please attach a check showing that nobody is charged.", Color("fff9ed"))
+		_plain_message(parent, "Maya · favorites.gd:%d · Unresolved" % _lab_line("func save_favorite") if not _work_flags.get("tested", false) else "Maya · favorites.gd:%d · Resolved" % _lab_line("func save_favorite"), "What happens when a guest taps Save twice? Please check signed-in, signed-out, and double-tap behavior before merging.", Color("fff9ed"))
 	if _work_flags.get("review_context", false):
 		_plain_message(parent, "Maya added a checklist", "Remember one favorite. Charge nobody. Ask guests to sign in, even after a second tap.", Color.WHITE)
 	for event: Dictionary in _cr_activity:
