@@ -94,6 +94,7 @@ func _ready() -> void:
 	computer.phone_requested.connect(_open_phone)
 	computer.task_requested.connect(_desk_work)
 	computer.app_requested.connect(_desk_app)
+	computer.sandbox_action.connect(_sandbox_action)
 	computer.notification_received.connect(func(app: String, title: String) -> void:
 		if not seated:
 			hud.toast(app.capitalize() + " · " + title)
@@ -178,6 +179,10 @@ func _unhandled_input(event: InputEvent) -> void:
 func _interact(id: String) -> void:
 	if hud.is_modal_open() or finished or stage_index < 0 or seated:
 		return
+	if id == "intern" and flags.get("promised_sam", false) and not flags.get("kept_promise", false) and not flags.get("broke_promise", false) and stage_index >= 6:
+		_start_conversation("intern")
+		_open_card("promise_help", true)
+		return
 	if id == "desk":
 		_sit_down()
 		return
@@ -230,6 +235,8 @@ func _interact(id: String) -> void:
 			_open_card(stage)
 		return
 	var chatter: Dictionary = {"mentor":"Maya: “Clear questions. Small changes. More coffee.”", "manager":"Jordan: “Let's catch up at your 1:1.”", "standup":"This meeting could have been a message.", "kitchen":"A perfectly normal dependency on coffee.", "intern":"Sam: “Seventeen tabs. One might be documentation.”", "exit":"Finish your task before heading home."}
+	for person: String in ["mentor", "manager", "intern"]:
+		chatter[person] = _memory_line(str({"mentor":"Maya", "manager":"Jordan", "intern":"Sam"}[person]))
 	if id in ["mentor", "manager", "standup", "intern"]:
 		_start_conversation(id)
 		_open_custom({"title":"A quick catch-up.", "speaker":office.target_label(id), "body":str(chatter[id]), "choices":[{"label":"I'll let you get back to work.", "effects":{}, "feedback":"", "next":""}]}, true)
@@ -239,12 +246,14 @@ func _interact(id: String) -> void:
 func _open_card(id: String, is_ambient: bool = false) -> void:
 	current_card_id = id
 	current_card = Story.card(id)
+	if id == "manager":
+		current_card["body"] += "\n\n" + _memory_line("Jordan")
 	ambient = is_ambient
 	pending_next = ""
 	pending_advance = false
 	decision_open = true
 	card_on_computer = seated
-	if card_on_computer:
+	if card_on_computer and not is_ambient:
 		work_card_id = id
 		work_stage_index = stage_index
 	player.set_active(false)
@@ -272,6 +281,17 @@ func _choose(index: int) -> void:
 	if index < 0 or index >= choices.size():
 		return
 	var choice: Dictionary = choices[index]
+	if current_card_id == "review" and index == 0 and not flags.get("sandbox_complete", false):
+		computer.show_sandbox()
+		return
+	if current_card_id == "feature":
+		for key: String in ["checked_member", "checked_guest", "checked_double", "sandbox_complete", "sandbox_patch"]:
+			flags.erase(key)
+	if current_card_id == "intern" and index == 1:
+		flags["promised_sam"] = true
+	if current_card_id == "promise_help" and index == 0:
+		flags["kept_promise"] = true
+
 	decision_open = false
 	if current_card_id == "welcome":
 		hud.hide_modal()
@@ -287,7 +307,7 @@ func _choose(index: int) -> void:
 			flags[key] = effects[key]
 	phone_minutes += int(choice.get("minutes", 0))
 	pending_visit = str(choice.get("visit", ""))
-	if not ambient or current_card_id.begins_with("hr_"):
+	if not ambient or current_card_id.begins_with("hr_") or current_card_id in ["interruptions", "promise_help"]:
 		evidence.append({"task":str(current_card.get("title", "")), "decision":str(choice.get("label", "")), "feedback":str(choice.get("feedback", ""))})
 	pending_next = str(choice.get("next", ""))
 	pending_advance = not ambient
@@ -340,6 +360,18 @@ func _set_stage(index: int) -> void:
 	work_card_id = ""
 	work_stage_index = -1
 	stage_index = clampi(index, 0, STAGES.size()-1)
+	if stage_index == 3:
+		flags["interruptions_started"] = true
+	if stage_index >= 5 and flags.get("interruptions_started", false) and not flags.get("interruptions_done", false):
+		flags["interruptions_done"] = true
+		flags["missed_interruptions"] = true
+		stats.delivery = maxi(0, int(stats.delivery) - 4)
+		stats.trust = maxi(0, int(stats.trust) - 3)
+		evidence.append({"task":"Competing requests", "decision":"You left all three requests unanswered.", "feedback":"Maya repaired the build. Sam missed rehearsal, and Jordan waited. Delivery -4; Trust -3."})
+	if stage_index == 9 and flags.get("promised_sam", false) and not flags.get("kept_promise", false) and not flags.get("broke_promise", false):
+		flags["broke_promise"] = true
+		stats.trust = maxi(0, int(stats.trust) - 5)
+		evidence.append({"task":"A promise to Sam", "decision":"You left without checking back.", "feedback":"Sam remembers the missed promise. Trust -5."})
 	_update_hud()
 	if STAGES[stage_index] == "incident":
 		incident_active = true
@@ -559,8 +591,17 @@ func _desk_app(app: String) -> void:
 	if not seated or seating or phone.is_open():
 		return
 	var stage: String = STAGES[stage_index]
+	if app == "sandbox":
+		computer.show_sandbox()
+		return
+	if app == "triage":
+		_open_card("interruptions", true)
+		return
 	if app.begins_with("notice:"):
-		app = str({"notice:slack":"dm:" + ("Sam" if stage == "intern" else "Maya"), "notice:ai":"ai_task", "notice:changes":"cr:104"}.get(app, "task"))
+		app = str({"notice:slack":("triage" if stage == "review_info" and not flags.get("interruptions_done", false) else "dm:" + ("Sam" if stage == "intern" else "Maya")), "notice:ai":"ai_task", "notice:changes":"cr:104"}.get(app, "task"))
+	if app == "triage":
+		_open_card("interruptions", true)
+		return
 	if app == "task" or (app == "ai_task" and stage == "feature") or (app == "dm:Maya" and stage == "mentor") or (app == "dm:Sam" and stage == "intern"):
 		_desk_work()
 	elif app == "cr:104" and (stage in ["review_info", "review", "incident"] or (stage == "feature" and work_card_id == "push_cr")):
@@ -575,6 +616,41 @@ func _desk_app(app: String) -> void:
 		computer.show_cr_detail(104)
 	else:
 		computer.show_ai_idle()
+
+func _sandbox_action(action: String) -> void:
+	if action.begins_with("pass:"):
+		flags["checked_" + action.trim_prefix("pass:")] = true
+	elif action == "patch":
+		flags["sandbox_patch"] = true
+		for scenario: String in ["member", "guest", "double"]:
+			flags.erase("checked_" + scenario)
+	flags["sandbox_complete"] = bool(flags.get("checked_member", false)) and bool(flags.get("checked_guest", false)) and bool(flags.get("checked_double", false))
+	_update_hud()
+
+func _memory_line(person: String) -> String:
+	if person == "Maya":
+		if flags.get("early_merge", false):
+			return "Maya: ‘I remember that early merge. Attach evidence this time; confidence isn't a test result.’"
+		if flags.get("clarified", false):
+			return "Maya: ‘You asked about the guest case before building. That made this easier to review.’"
+		if flags.get("prioritized_meeting", false):
+			return "Maya: ‘I had to unstick the demo build while you were in that meeting. Please tell us when you're leaving it blocked.’"
+		if flags.get("missed_interruptions", false):
+			return "Maya: ‘I covered the demo build while everyone waited. Next time, please answer the triage thread.’"
+		return "Maya: ‘Send me the exact behavior you checked, and I'll review it.’"
+	if person == "Sam":
+		if flags.get("kept_promise", false):
+			return "Sam: ‘You came back like you promised. Next time I get stuck, I'm asking you first.’"
+		if flags.get("broke_promise", false):
+			return "Sam: ‘I waited for you. A clear no would've helped me plan.’"
+		if flags.get("helped", false) or flags.get("prioritized_sam", false):
+			return "Sam: ‘Thanks for making time when I was stuck. I owe you a demo rehearsal.’"
+		return "Sam: ‘Seventeen tabs. One might be documentation.’"
+	if flags.get("honest", false):
+		return "Jordan remembers: ‘You were honest about being blocked at standup. Keep giving me that kind of update.’"
+	if flags.get("optimistic", false):
+		return "Jordan remembers: ‘At standup you said it was almost done. That made the later delays a surprise.’"
+	return "Jordan: ‘I'd rather hear about a problem early than discover it at the demo.’"
 
 func _open_phone() -> void:
 	if not seated or seating or phone.is_open():
@@ -878,6 +954,10 @@ func _smoke_test() -> void:
 				if choices.is_empty():
 					failures.append("No choices at " + stage)
 					break
+				if current_card_id == "review" and not flags.get("sandbox_complete", false):
+					_sandbox_action("patch")
+					for scenario: String in ["member", "guest", "double"]:
+						_sandbox_action("pass:" + scenario)
 				_choose(0)
 			guard += 1
 		if seated:

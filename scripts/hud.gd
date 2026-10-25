@@ -276,14 +276,6 @@ func show_card(card: Dictionary) -> void:
 	_stack.add_child(_title(str(card.get("title", ""))))
 	var content := _scroll_content()
 	content.add_child(_body(str(card.get("body", ""))))
-	var decision: String = str(card.get("decision", ""))
-	if not decision.is_empty():
-		var question := _body("[b]" + decision + "[/b]")
-		var question_font := FontVariation.new()
-		question_font.base_font = UIFont
-		question_font.variation_embolden = 0.6
-		question.add_theme_font_override("bold_font", question_font)
-		content.add_child(question)
 	var choices: Array = card.get("choices", [])
 	_choice_count = choices.size()
 	for index in range(choices.size()):

@@ -8,6 +8,7 @@ signal phone_requested
 signal task_requested
 signal app_requested(app: String)
 signal notification_received(app: String, title: String)
+signal sandbox_action(action: String)
 
 const SIZE := Vector2i(1440, 810)
 const UIFont = preload("res://assets/fonts/Inter.ttf")
@@ -76,6 +77,11 @@ var _active_chat: int = -1
 var _chat_input: LineEdit
 var _chat_pending: Dictionary = {}
 var _chat_mode: bool = false
+var _sandbox_member: bool = true
+var _sandbox_last_tap: int = -10000
+var _sandbox_result: String = "Preview environment · No real orders"
+var _sandbox_orders: int = 0
+var _sandbox_favorites: int = 0
 var _slack_posted: Dictionary = {}
 var _slack_draft: TextEdit
 var _slack_send: Button
@@ -297,6 +303,8 @@ func show_card(card: Dictionary) -> void:
 		if sender in ["Maya", "Sam", "Jordan"]:
 			_slack_channel = sender
 		_refresh_inbox_badge()
+	if str(card.get("title", "")) == "Three things at once":
+		_slack_channel = "# triage"
 	_last_card = card.duplicate(true)
 	_task = str(card.get("title", _task))
 	_card_open = true
@@ -318,15 +326,6 @@ func show_card(card: Dictionary) -> void:
 		_slack_task_thread(content, card)
 	else:
 		_add_message(content, str(card.get("body", "")))
-	var decision: String = str(card.get("decision", ""))
-	if not decision.is_empty():
-		var question := _body("[b]" + decision + "[/b]")
-		var question_font := FontVariation.new()
-		question_font.base_font = UIFont
-		question_font.variation_embolden = 0.6
-		question.add_theme_font_override("bold_font", question_font)
-		question.add_theme_color_override("default_color", _accent)
-		content.add_child(question)
 	var choice_parent: VBoxContainer = content
 	if _app == "slack":
 		choice_parent = VBoxContainer.new()
@@ -512,6 +511,12 @@ func set_work_state(stage: String, flags: Dictionary, _awaiting_person: String) 
 	if stage == "feature" and not bool(flags.get("cr_submitted", false)) and (bool(flags.get("clear_prompt", false)) or bool(flags.get("vague_prompt", false)) or bool(flags.get("overbuilt", false))) and not _notified.has("draft_ready"):
 		_notified["draft_ready"] = true
 		_notify("changes", "CR #104 is ready to push", "Your draft is saved. Send it to Maya for review.")
+	if stage == "review_info" and not _notified.has("interruptions"):
+		_notified["interruptions"] = true
+		_messages.append({"sender":"Jordan · #triage", "time":"Today 11:15", "text":"My planning meeting starts in five minutes."})
+		_messages.append({"sender":"Changes bot · #triage", "time":"Today 11:15", "text":"Demo build failed. The shared preview is blocked."})
+		_messages.append({"sender":"Sam · #triage", "time":"Today 11:15", "text":"I need the demo environment for my rehearsal. Can you help?"})
+		_notify("slack", "# triage · Three requests", "Jordan's meeting, a broken demo build, and Sam's rehearsal need attention.")
 	_cr_status = "Merged" if bool(flags.get("cr_merged", false)) else ("Changes requested" if stage in ["review_info", "review"] else ("Review requested" if bool(flags.get("cr_submitted", false)) else ("Draft" if stage == "feature" else "Not started")))
 	_cr_summary.text = "CR #104  /  " + _cr_status
 	_refresh_inbox_badge()
@@ -533,13 +538,13 @@ func _red_dot(parent: Control, point: Vector2) -> Panel:
 	return dot
 
 func _thread_has_task(app: String, thread: String) -> bool:
-	return app == _task_app and thread == _task_thread
+	return (app == _task_app and thread == _task_thread) or (app == "slack" and thread == "# triage" and _notified.has("interruptions") and not _work_flags.get("interruptions_done", false))
 
 func _refresh_inbox_badge() -> void:
 	_app_unread["slack"] = _unread
 	for app: String in _dock_badges:
-		_dock_badges[app].visible = app == _task_app
-		_desktop_badges[app].visible = app == _task_app
+		_dock_badges[app].visible = app == _task_app or _thread_has_task(app, "# triage")
+		_desktop_badges[app].visible = _dock_badges[app].visible
 	_slack_button.tooltip_text = "Open Slack. %d unread messages." % _unread
 
 func _build_notifications() -> void:
@@ -713,7 +718,7 @@ func _build_sidebar(parent: Control, app: String) -> void:
 	var spacer := Control.new()
 	spacer.custom_minimum_size.y = 17
 	stack.add_child(spacer)
-	var links: Array = ["# engineering", "# reviews", "# incidents", "Direct messages", "Maya", "Sam", "Jordan"] if app == "slack" else (["Change requests  5", "CR #104", "Open", "Merged", "Closed", "Checks"] if app == "changes" else ["New chat", "Save favorites (task)"] + _chat_titles())
+	var links: Array = ["# engineering", "# reviews", "# incidents", "# triage", "Direct messages", "Maya", "Sam", "Jordan"] if app == "slack" else (["Change requests  5", "CR #104", "App preview", "Open", "Merged", "Closed", "Checks"] if app == "changes" else ["New chat", "Save favorites (task)"] + _chat_titles())
 	for item: String in links:
 		var button := Button.new()
 		button.text = item
@@ -750,6 +755,8 @@ func _sidebar_action(app: String, item: String) -> void:
 				if _chats[index]["title"] == item:
 					show_ai_chat(index)
 					break
+	elif item == "App preview":
+		app_requested.emit("sandbox")
 	elif item == "CR #104":
 		app_requested.emit("cr:104")
 	elif item == "Checks":
@@ -831,6 +838,9 @@ func show_slack(channel: String = "# engineering", route_task: bool = true) -> v
 	if route_task and ((channel == "Maya" and _stage == "mentor") or (channel == "Sam" and _stage == "intern")):
 		app_requested.emit("dm:" + channel)
 		return
+	if channel == "# triage" and not _work_flags.get("interruptions_done", false):
+		app_requested.emit("triage")
+		return
 	_slack_channel = channel
 	var content := _browse_start("slack", channel)
 	for message: Dictionary in _messages:
@@ -843,6 +853,12 @@ func show_slack(channel: String = "# engineering", route_task: bool = true) -> v
 			continue
 		content.add_child(_label(sender + "    " + str(message.get("time", "Today")), 16, MUTED))
 		_add_message(content, str(message["text"]))
+	if channel == "Maya" and _work_flags.get("early_merge", false):
+		_plain_message(content, "Maya · Today", "I remember that early merge. Please attach evidence this time.")
+	if channel == "Sam" and _work_flags.get("kept_promise", false):
+		_plain_message(content, "Sam · Today", "You came back like you promised. Next time I get stuck, I'm asking you first.")
+	elif channel == "Sam" and _work_flags.get("broke_promise", false):
+		_plain_message(content, "Sam · Today", "I waited for you. A clear no would have helped me plan.")
 	if channel == "Maya" and _stage in ["review_info", "review"]:
 		_link(content, "Open CR #104 and Maya's comments", "cr:104")
 	elif channel == "# engineering" and _stage in ["mentor", "intern"]:
@@ -855,12 +871,12 @@ func show_slack(channel: String = "# engineering", route_task: bool = true) -> v
 
 func _current_cr() -> Dictionary:
 	var diff: String = "  When Save is clicked\n+ Remember the selected favorite\n+ Ask guests to sign in\n- Place a coffee order\n+ Ignore a repeated tap"
-	if not _work_flags.get("tested", false):
+	if not (_work_flags.get("tested", false) or _work_flags.get("sandbox_patch", false)):
 		if _work_flags.get("vague_prompt", false):
 			diff = "  When Save is clicked\n+ Remember the selected favorite\n+ Place a coffee order immediately\n  Guest and repeated-tap rules: not specified"
 		elif _work_flags.get("overbuilt", false):
 			diff = "  When Save is clicked\n+ Open the coffee metaverse\n+ Mint one virtual lid\n+ Post a drink to the social feed\n  Original favorites behavior: not verified"
-	return {"id":104, "title":"Save coffee favorites", "author":"You", "branch":"intern/save-favorites", "status":_cr_status, "added":32, "removed":4, "files":2, "comments":[["You", "Save remembers a favorite. It must never place an order."], ["Maya", "What happens when a guest double-taps? Please check before merging."]], "diff":diff, "checks":["Favorites: " + ("passed" if _work_flags.get("tested", false) else "pending"), "Guests: " + ("passed" if _work_flags.get("tested", false) else "pending"), "Double-tap: " + ("passed" if _work_flags.get("tested", false) else "pending")]}
+	return {"id":104, "title":"Save coffee favorites", "author":"You", "branch":"intern/save-favorites", "status":_cr_status, "added":32, "removed":4, "files":2, "comments":[["You", "Save remembers a favorite. It must never place an order."], ["Maya", "What happens when a guest double-taps? Please check before merging."]], "diff":diff, "checks":["Favorites: " + ("passed" if _work_flags.get("checked_member", false) else "pending"), "Guests: " + ("passed" if _work_flags.get("checked_guest", false) else "pending"), "Double-tap: " + ("passed" if _work_flags.get("checked_double", false) else "pending")]}
 
 func show_change_request(filter_status: String = "All") -> void:
 	var content := _browse_start("changes", "Change requests")
@@ -924,6 +940,94 @@ func show_cr_detail(id: int, tab: String = "Conversation") -> void:
 			_add_message(content, check)
 	else:
 		_cr_conversation(content, record, int(record["id"]) != 104 or _stage not in ["standup", "mentor", "feature"])
+
+func show_sandbox() -> void:
+	var content := _browse_start("changes", "Coffee app · Preview")
+	content.add_child(_label("Signed in as you" if _sandbox_member else "Guest session", 18, TEAL))
+	var preview := _panel(Color("fff7e9"), 12)
+	content.add_child(preview)
+	var stack := VBoxContainer.new()
+	preview.add_child(stack)
+	stack.add_child(_label("SMALL BATCH     /     Flat white", 25, TEXT))
+	stack.add_child(_label("$4.00     ·     Favorite this drink", 18, MUTED))
+	var save := _button("Save favorite", true)
+	save.pressed.connect(_sandbox_save)
+	stack.add_child(save)
+	stack.add_child(_label("Favorites: %d     Orders: %d     Charged: $%d" % [_sandbox_favorites, _sandbox_orders, _sandbox_orders * 4], 19, TEXT))
+	_add_message(content, _sandbox_result)
+	var controls := HBoxContainer.new()
+	content.add_child(controls)
+	var session := _button("Sign out" if _sandbox_member else "Sign in")
+	session.pressed.connect(func() -> void:
+		_sandbox_member = not _sandbox_member
+		_sandbox_last_tap = -10000
+		_sandbox_result = "Guest session started." if not _sandbox_member else "Signed in."
+		show_sandbox()
+	)
+	session.custom_minimum_size.x = 175
+	controls.add_child(session)
+	var reset := _button("Reset preview")
+	reset.pressed.connect(func() -> void:
+		_sandbox_orders = 0
+		_sandbox_favorites = 0
+		_sandbox_last_tap = -10000
+		_sandbox_result = "Preview reset. Your recorded checks are kept."
+		show_sandbox()
+	)
+	reset.custom_minimum_size.x = 210
+	controls.add_child(reset)
+	for scenario: String in ["member", "guest", "double"]:
+		content.add_child(_label(("✓ " if _work_flags.get("checked_" + scenario, false) else "○ ") + str({"member":"Signed-in Save remembers a favorite without charging", "guest":"Guests are asked to sign in without being charged", "double":"Two quick taps still save only once"}[scenario]), 17, TEAL))
+	if not _work_flags.get("sandbox_patch", false):
+		var fix := _button("Edit Save behavior")
+		fix.pressed.connect(_sandbox_fix_options)
+		content.add_child(fix)
+	_link(_window_stack, "Back to CR #104", "cr:104")
+
+func _sandbox_save() -> void:
+	var repeated: bool = Time.get_ticks_msec() - _sandbox_last_tap < 900
+	_sandbox_last_tap = Time.get_ticks_msec()
+	var patched: bool = bool(_work_flags.get("sandbox_patch", false))
+	var clear: bool = bool(_work_flags.get("clear_prompt", false)) or patched
+	if not _sandbox_member:
+		if clear:
+			_sandbox_result = "Sign in to save a favorite. No order placed. PASS: guest check."
+			sandbox_action.emit("pass:guest")
+		else:
+			_sandbox_orders += 1
+			_sandbox_result = "BUG: a guest was charged $4 instead of seeing sign-in."
+	elif repeated and not patched:
+		_sandbox_favorites += 1
+		_sandbox_result = "BUG: the second tap created a duplicate favorite."
+	elif repeated:
+		_sandbox_result = "Already saved. Second tap ignored. No charge. PASS: double-tap check."
+		sandbox_action.emit("pass:double")
+	elif clear:
+		_sandbox_favorites = 1
+		_sandbox_result = "Favorite saved. No order placed. PASS: signed-in check."
+		sandbox_action.emit("pass:member")
+	else:
+		_sandbox_orders += 1
+		_sandbox_result = "BUG: Save placed an order and charged $4."
+	show_sandbox()
+
+func _sandbox_fix_options() -> void:
+	var content := _browse_start("changes", "Edit Save behavior")
+	_add_message(content, "When someone taps Save:")
+	for rule: String in ["Remember a favorite; ask guests to sign in; ignore repeated taps.", "Place an order; treat each tap as a separate purchase.", "Hide Save from everyone so nobody can break it."]:
+		var button := _button(rule)
+		button.pressed.connect(func() -> void:
+			if rule.begins_with("Remember"):
+				sandbox_action.emit("patch")
+				_sandbox_favorites = 0
+				_sandbox_orders = 0
+				_sandbox_last_tap = -10000
+				_sandbox_result = "Small fix applied. Run all three checks again."
+			else:
+				_sandbox_result = "That rule still fails the ticket. Favorites should save without purchases."
+			show_sandbox()
+		)
+		content.add_child(button)
 
 func show_ai_idle() -> void:
 	show_ai_chat(_active_chat)
@@ -1051,6 +1155,7 @@ func _build_slack_composer() -> void:
 	_slack_draft.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_slack_draft.add_theme_font_size_override("font_size", 18)
 	_slack_draft.add_theme_color_override("font_readonly_color", _ink)
+	_slack_draft.add_theme_color_override("font_placeholder_color", Color("8b8490"))
 	_slack_draft.add_theme_stylebox_override("read_only", _box(Color.WHITE, 9, _line))
 	row.add_child(_slack_draft)
 	_slack_send = _button("Send", true)
