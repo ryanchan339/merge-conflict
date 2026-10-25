@@ -42,6 +42,20 @@ func _run() -> void:
 	_check(not game.hud._objective.visible and not game.hud._clock.visible, "Seating hides the walking HUD")
 	_check(game.hud._stats_panel.is_visible_in_tree(), "Seating keeps the four meter values visible")
 	_check(game.computer._root.theme.default_font.resource_path == "res://assets/fonts/Inter.ttf", "The physical desktop uses the bundled font")
+	_check(not game.computer._window.visible and game.computer._menu_app.text == "Finder", "Sitting down starts on the macOS-inspired desktop")
+	_check(game.computer._dock_buttons.size() == 6 and game.computer._dock_buttons["changes"].icon is Texture2D, "The dock contains six actual app icons")
+	await _click_monitor_button(_find_button(game.computer._root, "Open my task."))
+	_check(game.computer._app == "ai" and game.computer._accent == Color("158173"), "The feature opens in BatchGPT's green chat workspace")
+	var default_window_size: Vector2 = game.computer._window.size
+	await _click_monitor_button(_find_button(game.computer._window, "Zoom this window."))
+	_check(game.computer._window.size.x > default_window_size.x, "The green traffic light zooms the app window")
+	await _click_monitor_button(_find_button(game.computer._window, "Zoom this window."))
+	await _click_monitor_button(_find_button(game.computer._window, "Minimize this window."))
+	_check(not game.computer._window.visible, "The yellow traffic light minimizes back to the desktop")
+	var before_desktop_key: Dictionary = game.stats.duplicate(true)
+	await _tap(KEY_1)
+	_check(game.stats == before_desktop_key, "Number keys on the desktop cannot choose a hidden app option")
+	await _click_monitor_button(_find_button(game.computer._root, "Open my task."))
 	_check(game.computer.is_card_open() and game.current_card_id == "feature", "Feature appears inside the monitor")
 
 	var before: Dictionary = game.stats.duplicate(true)
@@ -77,7 +91,9 @@ func _run() -> void:
 	await _stand_near("desk", game.office.target_position("desk"))
 	await _tap(KEY_E)
 	await create_timer(0.55).timeout
+	await _click_monitor_button(_find_button(game.computer._root, "Open my task."))
 	_check(game.current_card_id == "push_cr" and game.stats == applied, "Returning to the desk resumes the draft without farming AI-prompt effects")
+	_check(game.computer._app == "changes" and game.computer._accent == Color("238449"), "Changes uses its own repository workspace and green review accent")
 	await _click_monitor_button(_find_button(game.computer._window, "I'll push CR #104 and request Maya's review."))
 	_check(bool(game.flags.get("cr_submitted", false)), "The physical Push button submits CR #104")
 	await _click_monitor_button(_find_button(game.computer._window, "Continue working."))
@@ -125,6 +141,9 @@ func _run() -> void:
 	_check(not game.phone.is_open() and game.office._phone_root.visible, "Escape puts the phone back on the desk")
 	_check(game.seated and game.computer.active, "Closing the phone returns input to the seated computer")
 	await _click_monitor_button(game.computer._slack_button)
+	_check(game.computer._app == "slack" and game.computer._accent == Color("68406e") and not game.computer._slack_badge.visible, "Slack opens its purple messaging workspace and clears the unread badge")
+	await _click_monitor_button(_find_button(game.computer._window, "# reviews"))
+	_check(game.computer._slack_channel == "# reviews", "Slack's channel sidebar opens the selected review feed")
 	var slack_copy: String = ""
 	for label: Node in game.computer._window.find_children("*", "RichTextLabel", true, false):
 		slack_copy += str(label.text)
@@ -137,6 +156,7 @@ func _run() -> void:
 	await _stand_near("desk", game.office.target_position("desk"))
 	await _tap(KEY_E)
 	await create_timer(0.55).timeout
+	await _click_monitor_button(_find_button(game.computer._root, "Open my task."))
 	_check(game.current_card_id == "waiting_maya" and not bool(game.flags.get("cr_merged", false)), "Returning early cannot bypass the chosen conversation or merge the CR")
 	await _click_monitor_button(_find_button(game.computer._window, "I'll go talk to Maya now."))
 	var maya_found: bool = await _stand_near("mentor", game.office.target_position("mentor"))
@@ -149,6 +169,7 @@ func _run() -> void:
 	await _stand_near("desk", game.office.target_position("desk"))
 	await _tap(KEY_E)
 	await create_timer(0.55).timeout
+	await _click_monitor_button(_find_button(game.computer._root, "Open my task."))
 	await _click_monitor_button(_find_button(game.computer._window, "I'll test all three cases, then merge CR #104."))
 	_check(bool(game.flags.get("cr_merged", false)) and bool(game.flags.get("tested", false)) and game.computer._cr_status == "Merged", "The reviewed merge records tests and updates the CR status")
 	await _click_monitor_button(_find_button(game.computer._window, "Continue working."))
@@ -160,6 +181,7 @@ func _run() -> void:
 	await _stand_near("desk", game.office.target_position("desk"))
 	await _tap(KEY_E)
 	await create_timer(0.55).timeout
+	await _click_monitor_button(_find_button(game.computer._root, "Open my task."))
 	await _click_monitor_button(_find_button(game.computer._window, "I'll merge now and deal with the comments later."))
 	await _click_monitor_button(_find_button(game.computer._window, "Continue working."))
 	await _click_monitor_button(_find_button(game.computer._root, "Open my task."))
@@ -218,7 +240,7 @@ func _click_monitor_button(button: Button) -> void:
 
 
 func _find_button(node: Node, text: String) -> Button:
-	if node is Button and node.text == text:
+	if node is Button and (node.text == text or str(node.get_meta("action_text", "")) == text or node.tooltip_text == text):
 		return node
 	for child: Node in node.get_children():
 		var found: Button = _find_button(child, text)
