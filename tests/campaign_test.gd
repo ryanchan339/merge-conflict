@@ -1,0 +1,98 @@
+extends SceneTree
+const Scene = preload("res://scenes/main.tscn")
+const Lab = preload("res://content/engineering_lab.gd")
+var game: Node
+var failures: int = 0
+var checks: int = 0
+func _initialize() -> void:
+	run.call_deferred()
+func check(value: bool, message: String) -> void:
+	checks += 1
+	if not value:
+		failures += 1
+	print(("PASS " if value else "FAIL ") + message)
+func run() -> void:
+	game = Scene.instantiate()
+	root.add_child(game)
+	current_scene = game
+	await process_frame
+	game.test_mode = true
+	game._choose(0)
+	game._interact("coffee_tablet")
+	check(game.current_card.get("_lab_action", "") == "tablet", "Physical kitchen tablet opens the running coffee app")
+	game._choose(2)
+	check(game.campaign.production.get("orders").size() == 2 and game.campaign.tablet_message.contains("$8"), "Two real tablet taps reproduce duplicate paid orders")
+	game._choose(3)
+	game._sit_down()
+	await create_timer(0.6).timeout
+	game._desk_app("lab:investigation")
+	game._desk_app("lab:diagnose:retry")
+	check(not game.flags.get("investigation_diagnosed", false), "A diagnosis needs actual receipt and log evidence")
+	game._desk_app("lab:clue:receipt")
+	game._desk_app("lab:clue:log")
+	game._desk_app("lab:diagnose:retry")
+	check(game.flags.get("investigation_diagnosed", false) and game.campaign.clues.size() == 2, "Evidence confirms the repeated wrong write")
+	game._desk_app("lab:deploy")
+	check(game.campaign.revision == 1 and game.campaign.notice.contains("blocked"), "A failing build cannot be deployed as a completed feature")
+	game._desk_app("lab:strategy:request_guard")
+	game._desk_app("tests")
+	check(game.flags.get("sandbox_complete", false), "The small guard fix passes real isolated checks")
+	game._desk_app("lab:deploy")
+	check(game.campaign.revision == 1 and game.campaign.notice.contains("review"), "A passing candidate still requires CR review before normal deployment")
+	game.flags["cr_merged"] = true
+	game._desk_app("lab:deploy")
+	check(game.campaign.revision == 2 and game.campaign.production.get("orders").is_empty(), "Passing staging code becomes the actual production revision")
+	check(game.campaign.production.get("favorites").size() == 1, "Coworkers try the deployed app and save only once")
+	game._sandbox_action("edit:write_target:orders")
+	game._stand_up()
+	game._interact("coffee_tablet")
+	game._choose(2)
+	check(game.campaign.production.get("orders").is_empty(), "Editing staging does not silently change the live tablet")
+	game._choose(3)
+	game._sit_down()
+	await create_timer(0.6).timeout
+	game._desk_app("lab:deploy")
+	check(game.campaign.revision == 2, "A new failing staging revision is blocked without replacing production")
+	game._desk_app("lab:rollback")
+	check(game.campaign.revision == 3 and game.campaign.production.get("orders").size() == 2, "Rollback restores the actual previous behavior, including its known bug")
+	game._sandbox_action("edit:deduplicate:false")
+	var trust_before: int = int(game.stats.trust)
+	game._desk_app("lab:deploy_anyway")
+	check(game.campaign.production.get("orders").size() == 2 and int(game.stats.trust) < trust_before, "Shipping failed checks causes actual duplicate orders, a page, and lost trust")
+	game._desk_app("lab:disable")
+	var disabled: Dictionary = game.campaign.production.save_favorite("intern", "flat_white", "hold")
+	check(disabled["status"] == "unavailable" and disabled["charged"] == 0 and game.flags.get("release_held", false), "A safe feature hold prevents charges while admitting incomplete work")
+	game._set_stage(4)
+	game._desk_work()
+	check(str(game.current_card["choices"][0]["label"]).contains("hold the feature"), "Review offers an honest deferred-release outcome")
+	game._choose(0)
+	check(not game.flags.get("tested", false) and not game.flags.get("cr_merged", false), "Deferring does not fabricate tested or merged status")
+	game._continue()
+	game._desk_app("lab:strategy:upsert")
+	game._desk_app("tests")
+	game._desk_app("lab:request_review")
+	check(game.flags.get("cr_merged", false), "A deferred feature can return for follow-up review after its checks pass")
+	game._desk_app("lab:deploy")
+	var app: RefCounted = game.campaign.production
+	app.save_favorite("intern", "flat_white", "different-id-1")
+	app.save_favorite("intern", "flat_white", "different-id-2")
+	check(app.get("favorites").size() == 1 and app.get("orders").is_empty(), "The broader store-once solution handles retries with different IDs")
+	game._desk_app("lab:debug:double")
+	var trace: Array = game.campaign._trace()
+	check(not trace.is_empty() and int(trace[0]["line"]) > 0 and trace.back().has("result"), "Debugger uses executable source lines, variable snapshots, and real return values")
+	game._desk_app("lab:step")
+	check(game.campaign.trace_index == 1, "Debugger stepping advances to the next executed line")
+	game._desk_app("lab:back")
+	check(game.campaign.trace_index == 0, "Debugger can revisit earlier state")
+	game._desk_app("lab:calendar")
+	check(game.office.schedule_status().size() == 3, "Calendar shows current locations for all three coworkers")
+	game._set_stage(3)
+	game._stand_up()
+	game._interact("manager")
+	check(game.current_card.get("_lab_action", "") == "schedule", "A busy coworker offers messaging or returning after the meeting")
+	game._choose(0)
+	check(game.stage_index == 3 and str(game.computer._messages.back()["sender"]).contains("Jordan"), "Sending meeting context creates a real DM without skipping the assignment")
+	print("CAMPAIGN TEST %s (%d checks; %d failures)" % ["PASS" if failures == 0 else "FAIL", checks, failures])
+	game.queue_free()
+	await process_frame
+	quit(0 if failures == 0 else 1)

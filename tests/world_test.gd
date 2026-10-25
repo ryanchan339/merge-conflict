@@ -3,7 +3,7 @@ extends SceneTree
 ## Checks real collision geometry, rather than merely checking marker data.
 
 const OfficeScene = preload("res://scripts/office.gd")
-const REQUIRED_TARGETS: Array[String] = ["desk", "mentor", "manager", "manager_seat", "hr", "standup", "kitchen", "intern", "exit", "phone", "fridge", "drawer", "cup", "coffee_machine", "printer", "vending_machine", "snack", "water_cooler", "whiteboard", "water_plant"]
+const REQUIRED_TARGETS: Array[String] = ["desk", "mentor", "manager", "manager_seat", "hr", "standup", "kitchen", "intern", "exit", "phone", "fridge", "drawer", "cup", "coffee_machine", "printer", "vending_machine", "snack", "water_cooler", "whiteboard", "water_plant", "coffee_tablet"]
 const CELL_SIZE: float = 0.5
 const REACH: float = 3.6
 var _failures: int = 0
