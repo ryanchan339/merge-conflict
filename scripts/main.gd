@@ -94,6 +94,10 @@ func _ready() -> void:
 	computer.phone_requested.connect(_open_phone)
 	computer.task_requested.connect(_desk_work)
 	computer.app_requested.connect(_desk_app)
+	computer.notification_received.connect(func(app: String, title: String) -> void:
+		if not seated:
+			hud.toast(app.capitalize() + " · " + title)
+	)
 	phone = PocketPhone.new()
 	add_child(phone)
 	phone.closed.connect(_phone_closed)
@@ -555,15 +559,20 @@ func _desk_app(app: String) -> void:
 	if not seated or seating or phone.is_open():
 		return
 	var stage: String = STAGES[stage_index]
-	var task_app: String = "slack" if stage in ["mentor", "intern"] else ("ai" if stage == "feature" and work_card_id != "push_cr" else "changes")
-	if stage == "incident":
-		task_app = "changes"
-	if app == "slack":
-		computer.show_slack()
-	elif app == "task" or (app == task_app and stage in ["mentor", "feature", "review_info", "review", "intern", "incident"]):
+	if app.begins_with("notice:"):
+		app = str({"notice:slack":"dm:" + ("Sam" if stage == "intern" else "Maya"), "notice:ai":"ai_task", "notice:changes":"cr:104"}.get(app, "task"))
+	if app == "task" or (app == "ai_task" and stage == "feature") or (app == "dm:Maya" and stage == "mentor") or (app == "dm:Sam" and stage == "intern"):
 		_desk_work()
+	elif app == "cr:104" and (stage in ["review_info", "review", "incident"] or (stage == "feature" and work_card_id == "push_cr")):
+		_desk_work()
+	elif app.begins_with("dm:"):
+		computer.show_slack(app.trim_prefix("dm:"), false)
+	elif app == "slack":
+		computer.show_slack()
 	elif app == "changes":
 		computer.show_change_request()
+	elif app == "cr:104":
+		computer.show_cr_detail(104)
 	else:
 		computer.show_ai_idle()
 

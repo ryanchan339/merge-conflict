@@ -7,9 +7,11 @@ signal close_requested
 signal phone_requested
 signal task_requested
 signal app_requested(app: String)
+signal notification_received(app: String, title: String)
 
 const SIZE := Vector2i(1440, 810)
 const UIFont = preload("res://assets/fonts/Inter.ttf")
+const WorkspaceData = preload("res://content/workspace_data.gd")
 const BG := Color("101d27")
 const PANEL := Color("1b2c38")
 const TEXT := Color("edf4ec")
@@ -55,9 +57,29 @@ var _line := Color("e7e7ec")
 var _zoomed: bool = false
 var _work_flags: Dictionary = {}
 var _slack_channel: String = "# engineering"
+var _app_unread: Dictionary = {"slack":0, "changes":0, "ai":0}
+var _dock_badges: Dictionary = {}
+var _notification_button: Button
+var _notification_title: Label
+var _notification_body: Label
+var _notification_icon: TextureRect
+var _notification_timer: Timer
+var _notification_app: String = ""
+var _cr_records: Array[Dictionary] = []
+var _selected_cr: int = 104
+var _cr_tab: String = "Conversation"
+var _chats: Array[Dictionary] = []
+var _active_chat: int = -1
+var _chat_input: LineEdit
+var _chat_pending: Dictionary = {}
+var _chat_mode: bool = false
+var _chat_scroll: ScrollContainer
 
 
 func setup(surface: MeshInstance3D, camera: Camera3D) -> void:
+	_messages = WorkspaceData.messages()
+	_cr_records = WorkspaceData.change_requests()
+	_chats = WorkspaceData.chats()
 	_surface = surface
 	_camera = camera
 	_viewport = SubViewport.new()
@@ -174,15 +196,19 @@ func _build_desktop() -> void:
 		cell.add_child(dot)
 		_dock_dots[app] = dot
 	_slack_button = _dock_buttons["slack"]
-	_slack_badge = _label("", 13, Color.WHITE)
-	_slack_badge.position = Vector2(44, 0)
-	_slack_badge.size = Vector2(25, 25)
-	_slack_badge.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	var badge_style := _box(Color("d54d62"), 12)
-	badge_style.content_margin_left = 0
-	badge_style.content_margin_right = 0
-	_slack_badge.add_theme_stylebox_override("normal", badge_style)
-	_slack_button.add_child(_slack_badge)
+	for app: String in ["slack", "changes", "ai"]:
+		var badge := _label("", 13, Color.WHITE)
+		badge.position = Vector2(44, 0)
+		badge.size = Vector2(25, 25)
+		badge.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		var badge_style := _box(Color("d54d62"), 12)
+		badge_style.content_margin_left = 0
+		badge_style.content_margin_right = 0
+		badge.add_theme_stylebox_override("normal", badge_style)
+		_dock_buttons[app].add_child(badge)
+		_dock_badges[app] = badge
+	_slack_badge = _dock_badges["slack"]
+	_build_notifications()
 	_cursor = _label("↖", 29, Color("182332"))
 	_cursor.z_index = 10
 	_cursor.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -276,7 +302,14 @@ func show_card(card: Dictionary) -> void:
 	_feedback = false
 	_choice_count = 0
 	_build_app_shell(_app)
-	_add_app_heading(str(card.get("title", "Your task")))
+	if _app == "changes":
+		_cr_header(_current_cr())
+	else:
+		_add_app_heading(str(card.get("title", "Your task")))
+	if _app == "ai":
+		_window_stack.add_child(_label("✦ BatchGPT · Feature conversation", 17, TEAL))
+	elif _app == "slack":
+		_window_stack.add_child(_label(_slack_channel + " · Today", 17, MUTED))
 	var content := _scroll_content()
 	_add_message(content, str(card.get("body", "")))
 	var decision: String = str(card.get("decision", ""))
@@ -332,6 +365,9 @@ func forward_input(event: InputEvent) -> bool:
 	if event is InputEventKey:
 		if not _window.visible:
 			return false
+		if is_instance_valid(_chat_input) and _chat_input.has_focus():
+			_viewport.push_input(event.duplicate(), true)
+			return true
 		var key: InputEventKey = event
 		if not key.pressed or key.echo:
 			return false
@@ -425,32 +461,91 @@ func set_work_state(stage: String, flags: Dictionary, _awaiting_person: String) 
 			"exit":["People Operations · Direct message", "Your evaluation is ready at the elevator. Please return all borrowed confidence."]
 		}
 		if updates.has(stage):
-			_messages.append({"sender":str(updates[stage][0]), "text":str(updates[stage][1])})
-			_unread += 1
+			_messages.append({"sender":str(updates[stage][0]), "text":str(updates[stage][1]), "time":"Today " + _menu_clock.text.right(5)})
+			var destination: String = "ai" if stage == "feature" else ("changes" if stage in ["review_info", "review", "incident"] else "slack")
+			_notify(destination, str(updates[stage][0]).split(" · ")[0], str(updates[stage][1]))
+	if stage == "feature" and not bool(flags.get("cr_submitted", false)) and (bool(flags.get("clear_prompt", false)) or bool(flags.get("vague_prompt", false)) or bool(flags.get("overbuilt", false))) and not _notified.has("draft_ready"):
+		_notified["draft_ready"] = true
+		_notify("changes", "CR #104 is ready to push", "Your draft is saved. Send it to Maya for review.")
 	_cr_status = "Merged" if bool(flags.get("cr_merged", false)) else ("Changes requested" if stage in ["review_info", "review"] else ("Review requested" if bool(flags.get("cr_submitted", false)) else ("Draft" if stage == "feature" else "Not started")))
 	_cr_summary.text = "CR #104  /  " + _cr_status
 	_refresh_inbox_badge()
 
 func _refresh_inbox_badge() -> void:
-	_slack_badge.text = str(_unread)
-	_slack_badge.visible = _unread > 0
+	_app_unread["slack"] = _unread
+	for app: String in _dock_badges:
+		_dock_badges[app].text = str(int(_app_unread.get(app, 0)))
+		_dock_badges[app].visible = int(_app_unread.get(app, 0)) > 0
 	_slack_button.tooltip_text = "Open Slack. %d unread messages." % _unread
 
-func _read_only_window(app: String, title: String, body: String) -> void:
-	_app = "ai" if app == "batchgpt" else app
-	_card_open = false
-	_feedback = false
-	_choice_count = 0
-	_build_app_shell(_app)
-	_add_app_heading(title)
-	var content := _scroll_content()
-	_add_message(content, body)
-	var action := _button("Open my current task.", true)
-	action.pressed.connect(func() -> void: app_requested.emit("task"))
-	_window_stack.add_child(action)
+func _build_notifications() -> void:
+	_notification_button = Button.new()
+	_notification_button.name = "AppNotification"
+	_notification_button.position = Vector2(1000, 51)
+	_notification_button.size = Vector2(405, 109)
+	_notification_button.z_index = 8
+	_notification_button.add_theme_stylebox_override("normal", _box(Color("fffdfb"), 15, Color("e2dce7")))
+	_notification_button.add_theme_stylebox_override("hover", _box(Color.WHITE, 15, Color("c7b7d9")))
+	_notification_button.pressed.connect(_activate_notification)
+	_root.add_child(_notification_button)
+	_notification_icon = TextureRect.new()
+	_notification_icon.position = Vector2(14, 26)
+	_notification_icon.size = Vector2(50, 50)
+	_notification_icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_notification_icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_notification_button.add_child(_notification_icon)
+	_notification_title = _label("", 18, Color("282333"))
+	_notification_title.position = Vector2(77, 14)
+	_notification_title.size = Vector2(310, 25)
+	_notification_title.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	_notification_button.add_child(_notification_title)
+	_notification_body = _label("", 16, Color("6c6476"))
+	_notification_body.position = Vector2(77, 42)
+	_notification_body.size = Vector2(307, 57)
+	_notification_body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_notification_body.max_lines_visible = 2
+	_notification_button.add_child(_notification_body)
+	_notification_button.hide()
+	_notification_timer = Timer.new()
+	_notification_timer.one_shot = true
+	_notification_timer.wait_time = 7.0
+	_notification_timer.timeout.connect(func() -> void: _notification_button.hide())
+	add_child(_notification_timer)
 
+func _notify(app: String, title: String, message: String) -> void:
+	_notification_app = app
+	if app == "slack":
+		_unread += 1
+	else:
+		_app_unread[app] = int(_app_unread.get(app, 0)) + 1
+	_refresh_inbox_badge()
+	_notification_icon.texture = _icon_cache[app]
+	_notification_title.text = str({"slack":"Slack", "changes":"Changes", "ai":"BatchGPT"}[app]) + " · " + title
+	_notification_body.text = message
+	_notification_button.show()
+	_notification_timer.start()
+	notification_received.emit(app, title)
+
+func _mark_app_read(app: String) -> void:
+	if app == "slack":
+		_unread = 0
+	_app_unread[app] = 0
+	_refresh_inbox_badge()
+	if _notification_app == app:
+		_notification_button.hide()
+
+func _activate_notification() -> void:
+	var app: String = _notification_app
+	if _feedback:
+		_feedback = false
+		continue_pressed.emit()
+	_notification_button.hide()
+	app_requested.emit("notice:" + app)
 
 func _build_app_shell(app: String) -> void:
+	_chat_input = null
+	_chat_mode = false
+	_mark_app_read(app)
 	var palettes: Dictionary = {
 		"slack":["1e1d22", "797680", "68406e", "ffffff", "e9e6eb", "351538"],
 		"changes":["24292f", "6e7781", "238449", "f6f8fa", "d8dee4", "eef1f4"],
@@ -551,7 +646,7 @@ func _build_sidebar(parent: Control, app: String) -> void:
 	var spacer := Control.new()
 	spacer.custom_minimum_size.y = 17
 	stack.add_child(spacer)
-	var links: Array = ["# engineering", "# reviews", "# incidents", "Direct messages", "Maya", "Sam", "Jordan"] if app == "slack" else (["Overview", "Change requests  1", "Checks", "Activity"] if app == "changes" else ["New chat", "Save favorites", "Recent conversations"])
+	var links: Array = ["# engineering", "# reviews", "# incidents", "Direct messages", "Maya", "Sam", "Jordan"] if app == "slack" else (["Change requests  5", "Open", "Merged", "Closed", "Checks"] if app == "changes" else ["New chat", "Save favorites (task)"] + _chat_titles())
 	for item: String in links:
 		var button := Button.new()
 		button.text = item
@@ -577,14 +672,26 @@ func _sidebar_action(app: String, item: String) -> void:
 	if app == "slack":
 		show_slack(item)
 	elif app == "ai":
-		_navigate_app("ai")
+		if item == "New chat":
+			show_ai_chat(-1)
+		elif item == "Save favorites (task)":
+			app_requested.emit("ai_task")
+		else:
+			for index: int in range(_chats.size()):
+				if _chats[index]["title"] == item:
+					show_ai_chat(index)
+					break
 	elif item == "Checks":
-		var result: String = "Three checks passed. Favorites save once, guests sign in, and nobody is charged." if bool(_work_flags.get("tested", false)) else "No checks have been recorded yet. Verify favorites, signed-out users, and double-taps before you merge."
-		_read_only_window("changes", "Checks", result)
-	elif item == "Activity":
-		_read_only_window("changes", "CR #104 · Activity", "Current status: " + _cr_status + ".\n\nMaya is the assigned reviewer. Your decisions and review comments stay attached to this change.")
+		show_cr_detail(104, "Checks")
 	else:
-		_navigate_app("changes")
+		show_change_request(item if item in ["Open", "Merged", "Closed"] else "All")
+
+func _chat_titles() -> Array:
+	var titles: Array = []
+	for chat: Dictionary in _chats.slice(maxi(0, _chats.size() - 6)):
+		titles.append(str(chat["title"]))
+	return titles
+
 
 
 func _add_app_heading(title: String) -> void:
@@ -635,36 +742,171 @@ func _zoom_window() -> void:
 	_window.size = Vector2(1384, 658) if _zoomed else Vector2(1310, 638)
 
 
-func show_slack(channel: String = "# engineering") -> void:
-	_slack_channel = channel
-	_unread = 0
-	_refresh_inbox_badge()
-	var body: String = ""
-	var first: int = maxi(0, _messages.size() - 3) if channel == "# engineering" else 0
-	for index: int in range(first, _messages.size()):
-		var message: Dictionary = _messages[index]
-		var sender: String = str(message["sender"])
-		if channel == "# reviews" and not (sender.contains("CR") or sender.contains("reviews")):
-			continue
-		if channel == "# incidents" and not sender.contains("Pager"):
-			continue
-		if channel == "Direct messages" and not sender.contains("Direct message"):
-			continue
-		if channel in ["Maya", "Sam", "Jordan"] and not sender.contains(channel):
-			continue
-		body += "[b]%s[/b]\n%s\n\n" % [message["sender"], message["text"]]
-	_read_only_window("slack", channel, body.strip_edges() if not body.is_empty() else "No new messages here. A rare workplace achievement.")
+func _browse_start(app: String, title: String) -> VBoxContainer:
+	_app = app
+	_card_open = false
+	_feedback = false
+	_choice_count = 0
+	_build_app_shell(app)
+	_add_app_heading(title)
+	return _scroll_content()
 
-func show_change_request() -> void:
-	var body: String = "[b]Status: %s[/b]\n\nSave remembers a favorite. Guests sign in. No coffee orders are placed.\n\n" % _cr_status
-	if _stage in ["review_info", "review", "intern", "manager", "kitchen", "incident", "exit"]:
-		body += "[b]Maya · Comment 1[/b]\nDoes Save only remember a drink, or can it place an order?\n\n[b]Maya · Comment 2[/b]\nWhat happens when a guest double-taps?"
+func _link(parent: Control, text: String, route: String) -> void:
+	var button := _button(text)
+	button.pressed.connect(func() -> void: app_requested.emit(route))
+	parent.add_child(button)
+
+func show_slack(channel: String = "# engineering", route_task: bool = true) -> void:
+	if route_task and ((channel == "Maya" and _stage == "mentor") or (channel == "Sam" and _stage == "intern")):
+		app_requested.emit("dm:" + channel)
+		return
+	_slack_channel = channel
+	var content := _browse_start("slack", channel)
+	for message: Dictionary in _messages:
+		var sender: String = str(message["sender"])
+		if channel.begins_with("#") and not sender.replace(" ", "").contains(channel.replace(" ", "")) and not (channel == "# reviews" and sender.contains("CR")):
+			continue
+		if channel == "Direct messages" and not (sender.contains("Direct message") or sender.begins_with("You")):
+			continue
+		if channel in ["Maya", "Sam", "Jordan"] and (not sender.contains(channel) or not (sender.contains("Direct message") or sender.begins_with("You") or sender.contains("CR #"))):
+			continue
+		content.add_child(_label(sender + "    " + str(message.get("time", "Today")), 16, MUTED))
+		_add_message(content, str(message["text"]))
+	if channel == "Maya" and _stage in ["review_info", "review"]:
+		_link(content, "Open CR #104 and Maya's comments", "cr:104")
+	elif channel == "# engineering" and _stage in ["mentor", "intern"]:
+		_link(content, "Reply to " + ("Maya" if _stage == "mentor" else "Sam"), "dm:" + ("Maya" if _stage == "mentor" else "Sam"))
+
+	await get_tree().process_frame
+	if is_instance_valid(content):
+		var scroll := content.get_parent() as ScrollContainer
+		scroll.scroll_vertical = int(scroll.get_v_scroll_bar().max_value)
+
+func _current_cr() -> Dictionary:
+	return {"id":104, "title":"Save coffee favorites", "author":"You", "branch":"intern/save-favorites", "status":_cr_status, "added":32, "removed":4, "files":2, "comments":[["You", "Save remembers a favorite. It must never place an order."], ["Maya", "What happens when a guest double-taps? Please check before merging."]], "diff":"  When Save is clicked\n+ Remember the selected favorite\n+ Ask guests to sign in\n- Place a coffee order\n+ Ignore a repeated tap", "checks":["Favorites: " + ("passed" if _work_flags.get("tested", false) else "pending"), "Guests: " + ("passed" if _work_flags.get("tested", false) else "pending"), "Double-tap: " + ("passed" if _work_flags.get("tested", false) else "pending")]}
+
+func show_change_request(filter_status: String = "All") -> void:
+	var content := _browse_start("changes", "Change requests")
+	content.add_child(_label("coffee-app    /    5 changes    /    " + filter_status, 17, MUTED))
+	var records: Array = [_current_cr()] + _cr_records
+	for record: Dictionary in records:
+		if filter_status != "All" and str(record["status"]) != filter_status:
+			continue
+		var id: int = int(record["id"])
+		var button := _button("#%d  %s\n%s · %s · %d files · +%d −%d" % [id, record["title"], record["status"], record["author"], record["files"], record["added"], record["removed"]])
+		button.set_meta("action_text", "Open CR #%d" % id)
+		button.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		button.custom_minimum_size.y = 85
+		button.pressed.connect(func() -> void:
+			if id == 104:
+				app_requested.emit("cr:104")
+			else:
+				show_cr_detail(id)
+		)
+		content.add_child(button)
+
+func _cr_header(record: Dictionary) -> void:
+	_window_stack.add_child(_label("#%d  %s" % [record["id"], record["title"]], 26, TEXT))
+	_window_stack.add_child(_label("%s · %s wants to merge %s → main" % [record["status"], record["author"], record["branch"]], 16, TEAL))
+	var tabs := HBoxContainer.new()
+	_window_stack.add_child(tabs)
+	for tab: String in ["Conversation", "Files changed", "Checks"]:
+		var button := _button(tab)
+		button.add_theme_font_size_override("font_size", 17)
+		button.custom_minimum_size.x = 175
+		button.pressed.connect(func() -> void:
+			if tab == "Conversation" and int(record["id"]) == 104:
+				app_requested.emit("cr:104")
+			else:
+				show_cr_detail(int(record["id"]), tab)
+		)
+		tabs.add_child(button)
+
+func show_cr_detail(id: int, tab: String = "Conversation") -> void:
+	_app = "changes"
+	_card_open = false
+	_feedback = false
+	_choice_count = 0
+	_build_app_shell("changes")
+	var record: Dictionary = _current_cr()
+	for old: Dictionary in _cr_records:
+		if int(old["id"]) == id:
+			record = old
+	_selected_cr = id
+	_cr_tab = tab
+	_cr_header(record)
+	var content := _scroll_content()
+	if tab == "Files changed":
+		content.add_child(_label("%d files changed     +%d additions     −%d deletions" % [record["files"], record["added"], record["removed"]], 17, MUTED))
+		for line: String in str(record["diff"]).split("\n"):
+			content.add_child(_label(line, 20, Color("18734d") if line.begins_with("+") else (Color("bd3a4a") if line.begins_with("-") else _ink)))
+	elif tab == "Checks":
+		for check: String in record["checks"]:
+			_add_message(content, check)
 	else:
-		body += "Maya is the assigned reviewer. Build the feature, then push the draft for review."
-	_read_only_window("changes", "CR #104  /  Save coffee favorites", body)
+		for comment: Array in record["comments"]:
+			content.add_child(_label(str(comment[0]) + " commented", 17, MUTED))
+			_add_message(content, str(comment[1]))
 
 func show_ai_idle() -> void:
-	_read_only_window("batchgpt", "BatchGPT is confidently standing by.", "Open your current feature ticket to give the AI instructions.\n\nBatchGPT cannot approve its own work, although it has written a compelling essay about why it should.")
+	show_ai_chat(_active_chat)
+
+func show_ai_chat(index: int = -1) -> void:
+	_active_chat = index
+	var content := _browse_start("ai", "New chat" if index < 0 else str(_chats[index]["title"]))
+	_chat_mode = true
+	_chat_scroll = content.get_parent() as ScrollContainer
+	if index < 0:
+		_add_message(content, "What are we pretending to ship today?")
+	else:
+		for message: Dictionary in _chats[index]["messages"]:
+			content.add_child(_label("You" if message["role"] == "user" else "✦ BatchGPT", 16, TEAL))
+			var label := _label(str(message["text"]), 21, TEXT)
+			label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			content.add_child(label)
+		if _chat_pending.has(index):
+			content.add_child(_label("BatchGPT is typing…", 17, MUTED))
+	var composer := HBoxContainer.new()
+	_window_stack.add_child(composer)
+	_chat_input = LineEdit.new()
+	_chat_input.placeholder_text = "Message BatchGPT…"
+	_chat_input.max_length = 600
+	_chat_input.add_theme_stylebox_override("normal", _box(Color("f1f4ef"), 14, Color("dce3db")))
+	_chat_input.add_theme_stylebox_override("focus", _box(Color("f1f4ef"), 14, Color("158173")))
+	_chat_input.add_theme_color_override("font_color", Color("243633"))
+	_chat_input.add_theme_color_override("font_placeholder_color", Color("7d8580"))
+	_chat_input.custom_minimum_size.y = 52
+	_chat_input.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_chat_input.add_theme_font_size_override("font_size", 20)
+	_chat_input.text_submitted.connect(func(_text: String) -> void: _send_chat())
+	composer.add_child(_chat_input)
+	var send := _button("Send", true)
+	send.pressed.connect(_send_chat)
+	composer.add_child(send)
+	await get_tree().process_frame
+	if is_instance_valid(_chat_scroll):
+		_chat_scroll.scroll_vertical = int(_chat_scroll.get_v_scroll_bar().max_value)
+
+func _send_chat() -> void:
+	if not is_instance_valid(_chat_input):
+		return
+	var prompt: String = _chat_input.text.strip_edges()
+	if prompt.is_empty() or _chat_pending.has(_active_chat):
+		return
+	if _active_chat < 0:
+		_chats.append({"title":prompt.left(28), "messages":[]})
+		_active_chat = _chats.size() - 1
+	var index: int = _active_chat
+	_chats[index]["messages"].append({"role":"user", "text":prompt})
+	_chat_pending[index] = true
+	show_ai_chat(index)
+	await get_tree().create_timer(0.45).timeout
+	var answer: String = WorkspaceData.reply(prompt, str(_chats[index].get("last_reply", "")))
+	_chats[index]["last_reply"] = answer
+	_chats[index]["messages"].append({"role":"assistant", "text":answer})
+	_chat_pending.erase(index)
+	if _chat_mode and _active_chat == index and _window.visible:
+		show_ai_chat(index)
 
 
 func _select(index: int) -> void:
