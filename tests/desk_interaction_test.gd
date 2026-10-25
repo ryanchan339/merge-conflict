@@ -63,7 +63,7 @@ func _run() -> void:
 	_check(game.current_card_id == "mentor", "Sending the question opens Maya's follow-up in the conversation")
 	game.evidence.clear()
 	game._set_stage(2)
-	_check(not game.computer._dock_badges["slack"].visible and game.computer._thread_has_task("ai", "Save favorites (task)"), "Task dots move to BatchGPT when the assignment changes")
+	_check(not game.computer._dock_badges["slack"].visible and game.computer._thread_has_task("ai", "Save favorites"), "Task dots move to BatchGPT when the assignment changes")
 	await _click_monitor_button(_find_button(game.computer._root, "Open my task."))
 	_check(game.computer._app == "ai" and game.computer._accent == Color("158173"), "The feature opens in BatchGPT's green chat workspace")
 	var default_window_size: Vector2 = game.computer._window.size
@@ -134,6 +134,9 @@ func _run() -> void:
 		_finish()
 		return
 	await _click_monitor_button(selected)
+	_check(not game.flags.get("clear_prompt", false) and game.computer._slack_draft.text == wanted, "BatchGPT suggestions draft a prompt without submitting it")
+	await _click_monitor_button(game.computer._slack_send)
+	_check(game.computer._feature_messages.back()["role"] == "assistant", "BatchGPT replies to the sent prompt in its persistent chat thread")
 	_check(bool(game.flags.get("clear_prompt", false)), "Clicking the physical prompt records clear_prompt")
 	_check(int(game.stats.delivery) == int(before.delivery) + 14, "Prompt click applies delivery exactly once")
 	_check(int(game.stats.quality) == int(before.quality) + 15, "Prompt click applies quality exactly once")
@@ -143,6 +146,13 @@ func _run() -> void:
 	for label: Node in game.computer._window.find_children("*", "Label", true, false):
 		feedback_labels.append(str(label.text))
 	_check("Delivery +14" in feedback_labels and "Quality +15" in feedback_labels and "Trust +5" in feedback_labels and "Energy -6" in feedback_labels, "Physical monitor feedback displays the gains and loss from the clicked prompt")
+	var pinned_result: bool = false
+	for node: Node in game.computer._window_stack.get_children():
+		if node is PanelContainer:
+			for label: Node in node.find_children("*", "RichTextLabel", true, false):
+				if str(label.text).contains("small change"):
+					pinned_result = true
+	_check(pinned_result, "The latest result is pinned outside the scrollable conversation")
 	_check(game.evidence.size() == 1 and not game.decision_open and game.pending_advance, "One click submits one decision and opens feedback")
 	var applied: Dictionary = game.stats.duplicate(true)
 	var next: Button = _find_button(game.computer._window, "Continue working.")
@@ -170,6 +180,8 @@ func _run() -> void:
 	await _click_monitor_button(_find_button(game.computer._window, "Continue working."))
 	_check(game.stage_index == 3 and not game.computer.is_card_open(), "Submitting the CR unlocks the review notification")
 	_check(game.stats == applied and game.evidence.size() == 2, "Submission preserves feature effects and records its own action once")
+	game._desk_app("ai_task")
+	_check(game.computer._app == "ai" and game.computer._feature_messages.size() == 4, "The completed feature conversation reopens as a normal saved AI chat")
 	var stand: Button = _find_button(game.computer._root, "Stand up from my desk.")
 	await _click_monitor_button(stand)
 	_check(not game.seated and game.player.enabled and not game.computer.active, "Physical Stand up button restores walking")
