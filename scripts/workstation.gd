@@ -87,6 +87,7 @@ var _sandbox_last_tap: int = -10000
 var _sandbox_result: String = "Preview environment · No real orders"
 var _sandbox_orders: int = 0
 var _sandbox_favorites: int = 0
+var _feature_messages: Array[Dictionary] = []
 var _slack_posted: Dictionary = {}
 var _slack_draft: TextEdit
 var _slack_send: Button
@@ -319,20 +320,20 @@ func show_card(card: Dictionary) -> void:
 	if _app == "changes":
 		_cr_header(_current_cr())
 	else:
-		_add_app_heading(_slack_channel if _app == "slack" else str(card.get("title", "Your task")))
-	if _app == "ai":
-		_window_stack.add_child(_label("✦ BatchGPT · Feature conversation", 17, TEAL))
-	elif _app == "slack":
+		_add_app_heading(_slack_channel if _app == "slack" else ("Save favorites" if _app == "ai" else str(card.get("title", "Your task"))))
+	if _app == "slack":
 		_window_stack.add_child(_label(_slack_channel + " · Today", 17, MUTED))
 	var content := _scroll_content()
 	if _app == "changes" and _stage != "incident":
 		_cr_conversation(content, _current_cr(), _stage != "feature")
 	elif _app == "slack":
 		_slack_task_thread(content, card)
+	elif _app == "ai":
+		_feature_thread(content)
 	else:
 		_add_message(content, str(card.get("body", "")))
 	var choice_parent: VBoxContainer = content
-	if _app == "slack":
+	if _app in ["slack", "ai"]:
 		choice_parent = VBoxContainer.new()
 		choice_parent.add_theme_constant_override("separation", 5)
 		_window_stack.add_child(choice_parent)
@@ -341,19 +342,26 @@ func show_card(card: Dictionary) -> void:
 	for index: int in range(choices.size()):
 		var button := _button(_slack_reply_text(index) if _app == "slack" else str(choices[index].get("label", "Continue working.")))
 		button.set_meta("action_text", str(choices[index].get("label", "")))
-		button.custom_minimum_size.y = 41 if _app == "slack" else 56
-		if _app == "slack":
+		button.custom_minimum_size.y = 41 if _app in ["slack", "ai"] else 56
+		if _app in ["slack", "ai"]:
 			button.add_theme_font_size_override("font_size", 17)
 		button.alignment = HORIZONTAL_ALIGNMENT_LEFT
-		button.pressed.connect(_draft_slack_reply.bind(index) if _app == "slack" else _select.bind(index))
+		button.pressed.connect(_draft_slack_reply.bind(index) if _app in ["slack", "ai"] else _select.bind(index))
 		choice_parent.add_child(button)
-	if _app == "slack":
+	if _app in ["slack", "ai"]:
 		_build_slack_composer()
 		_scroll_thread_to_end(content)
 
 
 
 func show_feedback(text: String, changes: Dictionary = {}) -> void:
+	if _app == "ai":
+		if _work_flags.get("clear_prompt", false):
+			text = "I've drafted a small change in favorites.gd: save a favorite, ask guests to sign in, and never place an order. Please verify repeated taps and review CR #104 before shipping."
+		elif _work_flags.get("vague_prompt", false):
+			text = "I drafted Save with an immediate coffee order. I interpreted immaculate vibes as proactive delight. Please review the ordering path before shipping."
+		elif _work_flags.get("overbuilt", false):
+			text = "I drafted coins, a social feed, and a coffee metaverse. The core Save path still needs review. This may be more scope than SB-104 asked for."
 	_card_open = true
 	_feedback = true
 	_choice_count = 0
@@ -361,27 +369,32 @@ func show_feedback(text: String, changes: Dictionary = {}) -> void:
 	if _app == "changes" and _stage != "incident":
 		_cr_header(_current_cr())
 	else:
-		_add_app_heading(_slack_channel if _app == "slack" else ("Incident update." if _app == "changes" else "BatchGPT replied."))
+		_add_app_heading(_slack_channel if _app == "slack" else ("Incident update." if _app == "changes" else "Save favorites"))
 	var content := _scroll_content()
 	if _app == "slack":
 		_slack_task_thread(content, _last_card)
-		content.add_child(_label("Workspace update", 16, MUTED))
 	elif _app == "changes" and _stage != "incident":
-		_cr_activity.append({"author":"Changes bot", "text":text.split("\n\n")[0]})
 		_cr_conversation(content, _current_cr(), _stage != "feature")
-	if not text.is_empty() and (_app != "changes" or _stage == "incident"):
-		_add_message(content, text.split("\n\n")[0])
+		_cr_activity.append({"author":"Changes bot", "text":text.split("\n\n")[0]})
+	elif _app == "ai":
+		_feature_thread(content)
+		_feature_messages.append({"role":"assistant", "text":text.split("\n\n")[0]})
+	if not text.is_empty():
+		_window_stack.add_child(_label("BatchGPT" if _app == "ai" else ("Changes bot" if _app == "changes" else "Workspace update"), 15, MUTED))
+		_add_message(_window_stack, text.split("\n\n")[0])
+	_scroll_thread_to_end(content)
 	var change_row := HFlowContainer.new()
 	change_row.add_theme_constant_override("h_separation", 18)
 	change_row.add_theme_constant_override("v_separation", 8)
-	content.add_child(change_row)
+	_window_stack.add_child(change_row)
 	for key: String in ["delivery", "quality", "trust", "energy"]:
 		var delta: int = int(changes.get(key, 0))
 		if delta != 0:
 			change_row.add_child(_label("%s %+d" % [key.capitalize(), delta], 21, Color("18734d") if delta > 0 else Color("bd3a4a")))
 	if changes.is_empty():
 		change_row.add_child(_label("No stat changes.", 18, MUTED))
-	var next := _button("Continue working.", true)
+	var next := _button("Open draft CR #104" if _app == "ai" else "Continue working.", true)
+	next.set_meta("action_text", "Continue working.")
 	next.pressed.connect(func() -> void: continue_pressed.emit())
 	_window_stack.add_child(next)
 
@@ -402,7 +415,7 @@ func forward_input(event: InputEvent) -> bool:
 		var key: InputEventKey = event
 		if not key.pressed or key.echo:
 			return false
-		if _app == "slack" and not _feedback and key.keycode == KEY_ENTER and _slack_pending_choice >= 0:
+		if _app in ["slack", "ai"] and not _feedback and key.keycode == KEY_ENTER and _slack_pending_choice >= 0:
 			_send_slack_reply()
 			return true
 		if _feedback and (key.keycode == KEY_ENTER or key.keycode == KEY_KP_ENTER):
@@ -411,7 +424,7 @@ func forward_input(event: InputEvent) -> bool:
 		if _card_open and not _feedback and key.keycode >= KEY_1 and key.keycode <= KEY_9:
 			var index: int = key.keycode - KEY_1
 			if index < _choice_count:
-				if _app == "slack":
+				if _app in ["slack", "ai"]:
 					_draft_slack_reply(index)
 				else:
 					_select(index)
@@ -489,7 +502,7 @@ func set_work_state(stage: String, flags: Dictionary, _awaiting_person: String) 
 	elif stage == "feature":
 		var built: bool = bool(flags.get("clear_prompt", false)) or bool(flags.get("vague_prompt", false)) or bool(flags.get("overbuilt", false))
 		_task_app = "changes" if built else "ai"
-		_task_thread = "CR #104" if built else "Save favorites (task)"
+		_task_thread = "CR #104" if built else "Save favorites"
 	elif stage in ["review_info", "review", "incident"]:
 		_task_app = "changes"
 		_task_thread = "CR #104"
@@ -723,7 +736,7 @@ func _build_sidebar(parent: Control, app: String) -> void:
 	var spacer := Control.new()
 	spacer.custom_minimum_size.y = 17
 	stack.add_child(spacer)
-	var links: Array = ["# engineering", "# reviews", "# incidents", "# triage", "Direct messages", "Maya", "Sam", "Jordan"] if app == "slack" else (["Change requests  5", "CR #104", "Source code", "Test runner", "App preview", "Checks"] if app == "changes" else ["New chat", "Save favorites (task)"] + _chat_titles())
+	var links: Array = ["# engineering", "# reviews", "# incidents", "# triage", "Direct messages", "Maya", "Sam", "Jordan"] if app == "slack" else (["Change requests  5", "CR #104", "Source code", "Test runner", "App preview", "Checks"] if app == "changes" else ["New chat", "Save favorites"] + _chat_titles())
 	for item: String in links:
 		var button := Button.new()
 		button.text = item
@@ -753,7 +766,7 @@ func _sidebar_action(app: String, item: String) -> void:
 	elif app == "ai":
 		if item == "New chat":
 			show_ai_chat(-1)
-		elif item == "Save favorites (task)":
+		elif item == "Save favorites":
 			app_requested.emit("ai_task")
 		else:
 			for index: int in range(_chats.size()):
@@ -1126,7 +1139,7 @@ func show_test_runner(run: bool = true) -> void:
 		if result["passed"]:
 			passed += 1
 		_plain_message(content, ("PASS" if result["passed"] else "FAIL") + "  test_" + str(result["case"]), "Expected: " + str(result["expected"]) + "\nReceived: " + str(result["actual"]), Color("eef8f0") if result["passed"] else Color("fff0ed"))
-	content.add_child(_label("%d passed, %d failed · %s" % [passed, 3 - passed, "Ready for review" if passed == 3 else "Build blocked"], 20, TEAL))
+	_window_stack.add_child(_label("%d passed, %d failed · %s" % [passed, 3 - passed, "Ready for review" if passed == 3 else "Build blocked"], 20, TEAL))
 	if passed == 3:
 		_plain_message(content, "Changes bot · Attached to CR #104", "Three passing checks attached to this revision. Maya can now review the evidence.", Color.WHITE)
 	var actions := HBoxContainer.new()
@@ -1138,6 +1151,19 @@ func show_test_runner(run: bool = true) -> void:
 func _sandbox_fix_options() -> void:
 	_lab_file = "favorites.gd"
 	show_source()
+
+func _feature_thread(parent: Control) -> void:
+	if _feature_messages.is_empty():
+		_feature_messages.append({"role":"user", "text":"Ticket SB-104: let signed-in users save a favorite drink without buying it. Guests should sign in."})
+		_feature_messages.append({"role":"assistant", "text":"I've got the ticket. Send the instructions for the first draft; I'll return the change and a checklist."})
+	for message: Dictionary in _feature_messages:
+		_plain_message(parent, "You" if message["role"] == "user" else "BatchGPT", str(message["text"]), Color("f0f5ee") if message["role"] == "assistant" else Color("f3f2ed"))
+
+func show_ai_task_history() -> void:
+	var content := _browse_start("ai", "Save favorites")
+	_feature_thread(content)
+	_link(_window_stack, "Open CR #104", "cr:104")
+	_scroll_thread_to_end(content)
 
 func show_ai_idle() -> void:
 	show_ai_chat(_active_chat)
@@ -1258,8 +1284,8 @@ func _build_slack_composer() -> void:
 	var row := HBoxContainer.new()
 	_window_stack.add_child(row)
 	_slack_draft = TextEdit.new()
-	_slack_draft.name = "SlackReplyComposer"
-	_slack_draft.placeholder_text = "Choose a reply above…"
+	_slack_draft.name = "TaskMessageComposer"
+	_slack_draft.placeholder_text = "Choose a prompt above…" if _app == "ai" else "Choose a reply above…"
 	_slack_draft.editable = false
 	_slack_draft.custom_minimum_size = Vector2(0, 74)
 	_slack_draft.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -1314,6 +1340,8 @@ func _select(index: int) -> void:
 		var reply: String = str(_last_card.get("choices", [])[index].get("label", ""))
 		if _app == "slack":
 			_messages.append({"sender":"You · " + _slack_channel, "time":"Today " + _menu_clock.text.right(5), "text":_slack_reply_text(index)})
+		elif _app == "ai":
+			_feature_messages.append({"role":"user", "text":reply})
 		elif _app == "changes":
 			_cr_activity.append({"author":"You · Review response", "text":reply})
 		choice_selected.emit(index)

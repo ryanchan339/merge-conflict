@@ -608,12 +608,14 @@ func _desk_app(app: String) -> void:
 	if app == "triage":
 		_open_card("interruptions", true)
 		return
-	if app == "task" or (app == "ai_task" and stage == "feature") or (app == "dm:Maya" and stage == "mentor") or (app == "dm:Sam" and stage == "intern"):
+	if app == "task" or (app == "ai_task" and stage == "feature" and work_card_id != "push_cr") or (app == "dm:Maya" and stage == "mentor") or (app == "dm:Sam" and stage == "intern"):
 		_desk_work()
 	elif app == "cr:104" and (stage in ["review_info", "review", "incident"] or (stage == "feature" and work_card_id == "push_cr")):
 		_desk_work()
 	elif app.begins_with("dm:"):
 		computer.show_slack(app.trim_prefix("dm:"), false)
+	elif app == "ai_task":
+		computer.show_ai_task_history()
 	elif app == "slack":
 		computer.show_slack()
 	elif app == "changes":
