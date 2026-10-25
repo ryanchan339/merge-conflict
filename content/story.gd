@@ -255,6 +255,15 @@ static func card(id: String) -> Dictionary:
 	for card_id: String in ["push_cr", "review_notice", "review", "review_followup", "incident"]:
 		cards[card_id]["app"] = "changes"
 	cards["feature"]["app"] = "ai"
+	cards["interruptions"] = {
+		"app":"slack", "title":"Three things at once", "speaker":"# triage · Incoming",
+		"body":"Jordan: My planning meeting starts in five minutes.\nChanges bot: The demo build is red. Nobody can preview the app.\nSam: I need that demo environment to rehearse. Could you help?",
+		"choices":[
+			_choice("I'll fix the demo build first and ask Jordan to move the meeting.", "", {"interruptions_done":true,"prioritized_build":true,"quality":6,"delivery":3,"energy":-5}, "The demo build turns green. Sam can rehearse. Jordan moves the meeting and appreciates the specific update.", ""),
+			_choice("I'll join the meeting. The build and rehearsal will have to wait.", "", {"interruptions_done":true,"prioritized_meeting":true,"trust":3,"delivery":-6,"energy":-3}, "You make the meeting. Sam loses his rehearsal slot while the demo environment remains blocked.", ""),
+			_choice("I'll help Sam rehearse locally and leave the meeting and build for later.", "", {"interruptions_done":true,"prioritized_sam":true,"trust":5,"quality":-3,"delivery":-3,"energy":-5}, "Sam gets a rehearsal. Jordan notices the missed meeting, and Maya has to repair the shared demo build.", "")]
+	}
+	cards["promise_help"] = {"title":"Sam remembers your promise", "speaker":"Sam · fellow intern", "body":"You said you would check in after the demo. Sam kept the failing discount example open for you.", "choices":[_choice("Let's check that discount together now.", "", {"kept_promise":true,"helped":true,"trust":8,"quality":3,"energy":-5}, "You find the duplicated discount. Sam remembers that you came back when you said you would.", ""), _choice("I'm sorry. I can't make time today.", "", {"broke_promise":true,"trust":-5}, "Sam closes the example. Next time, he says, he would rather hear a clear no.", "")]}
 	return cards.get(id, {})
 
 
