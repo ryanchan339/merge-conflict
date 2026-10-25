@@ -26,6 +26,9 @@ var _root: Control
 var _window: PanelContainer
 var _window_stack: VBoxContainer
 var _desktop_task: Label
+var _desktop_badges: Dictionary = {}
+var _task_app: String = ""
+var _task_thread: String = ""
 var _cursor: Label
 var _mouse_inside: bool = false
 var _last_mouse: Vector2 = Vector2.ZERO
@@ -158,6 +161,8 @@ func _build_desktop() -> void:
 		shortcut.size = Vector2(76, 76)
 		shortcut.pressed.connect(_launch_icon.bind(app))
 		_root.add_child(shortcut)
+		if app != "tasks":
+			_desktop_badges[app] = _red_dot(shortcut, Vector2(62, 0))
 		var caption := _label(label, 18, Color.WHITE)
 		caption.position = Vector2(1245, 163 + index * 143)
 		caption.size = Vector2(145, 28)
@@ -197,16 +202,7 @@ func _build_desktop() -> void:
 		_dock_dots[app] = dot
 	_slack_button = _dock_buttons["slack"]
 	for app: String in ["slack", "changes", "ai"]:
-		var badge := _label("", 13, Color.WHITE)
-		badge.position = Vector2(44, 0)
-		badge.size = Vector2(25, 25)
-		badge.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		var badge_style := _box(Color("d54d62"), 12)
-		badge_style.content_margin_left = 0
-		badge_style.content_margin_right = 0
-		badge.add_theme_stylebox_override("normal", badge_style)
-		_dock_buttons[app].add_child(badge)
-		_dock_badges[app] = badge
+		_dock_badges[app] = _red_dot(_dock_buttons[app], Vector2(53, 0))
 	_slack_badge = _dock_badges["slack"]
 	_build_notifications()
 	_cursor = _label("↖", 29, Color("182332"))
@@ -444,6 +440,18 @@ func _navigate_app(app: String) -> void:
 
 func set_work_state(stage: String, flags: Dictionary, _awaiting_person: String) -> void:
 	_stage = stage
+	_task_app = ""
+	_task_thread = ""
+	if stage in ["mentor", "intern"]:
+		_task_app = "slack"
+		_task_thread = "Maya" if stage == "mentor" else "Sam"
+	elif stage == "feature":
+		var built: bool = bool(flags.get("clear_prompt", false)) or bool(flags.get("vague_prompt", false)) or bool(flags.get("overbuilt", false))
+		_task_app = "changes" if built else "ai"
+		_task_thread = "CR #104" if built else "Save favorites (task)"
+	elif stage in ["review_info", "review", "incident"]:
+		_task_app = "changes"
+		_task_thread = "CR #104"
 	_work_flags = flags.duplicate()
 	_menu_clock.text = "100%   •   Fri " + str({"standup":"09:05", "mentor":"09:30", "feature":"10:00", "review_info":"11:15", "review":"11:30", "intern":"13:00", "manager":"14:30", "kitchen":"15:15", "incident":"15:17", "exit":"17:00"}.get(stage, "09:00"))
 	if not _notified.has(stage):
@@ -471,11 +479,31 @@ func set_work_state(stage: String, flags: Dictionary, _awaiting_person: String) 
 	_cr_summary.text = "CR #104  /  " + _cr_status
 	_refresh_inbox_badge()
 
+func _red_dot(parent: Control, point: Vector2) -> Label:
+	var dot := Label.new()
+	dot.name = "TaskDot"
+	dot.position = point
+	dot.size = Vector2(13, 13)
+	var style := _box(Color("ed334b"), 7)
+	style.content_margin_left = 0
+	style.content_margin_right = 0
+	style.content_margin_top = 0
+	style.content_margin_bottom = 0
+	dot.add_theme_font_size_override("font_size", 1)
+	dot.add_theme_stylebox_override("normal", style)
+	dot.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	parent.add_child(dot)
+	dot.hide()
+	return dot
+
+func _thread_has_task(app: String, thread: String) -> bool:
+	return app == _task_app and thread == _task_thread
+
 func _refresh_inbox_badge() -> void:
 	_app_unread["slack"] = _unread
 	for app: String in _dock_badges:
-		_dock_badges[app].text = str(int(_app_unread.get(app, 0)))
-		_dock_badges[app].visible = int(_app_unread.get(app, 0)) > 0
+		_dock_badges[app].visible = app == _task_app
+		_desktop_badges[app].visible = app == _task_app
 	_slack_button.tooltip_text = "Open Slack. %d unread messages." % _unread
 
 func _build_notifications() -> void:
@@ -646,7 +674,7 @@ func _build_sidebar(parent: Control, app: String) -> void:
 	var spacer := Control.new()
 	spacer.custom_minimum_size.y = 17
 	stack.add_child(spacer)
-	var links: Array = ["# engineering", "# reviews", "# incidents", "Direct messages", "Maya", "Sam", "Jordan"] if app == "slack" else (["Change requests  5", "Open", "Merged", "Closed", "Checks"] if app == "changes" else ["New chat", "Save favorites (task)"] + _chat_titles())
+	var links: Array = ["# engineering", "# reviews", "# incidents", "Direct messages", "Maya", "Sam", "Jordan"] if app == "slack" else (["Change requests  5", "CR #104", "Open", "Merged", "Closed", "Checks"] if app == "changes" else ["New chat", "Save favorites (task)"] + _chat_titles())
 	for item: String in links:
 		var button := Button.new()
 		button.text = item
@@ -660,6 +688,8 @@ func _build_sidebar(parent: Control, app: String) -> void:
 		button.add_theme_stylebox_override("hover", _box(Color(1, 1, 1, 0.15) if app == "slack" else Color("e0e6e1"), 7))
 		button.pressed.connect(_sidebar_action.bind(app, item))
 		stack.add_child(button)
+		if _thread_has_task(app, item) or (app == "changes" and item == "Change requests  5" and _task_app == "changes"):
+			_red_dot(button, Vector2(171, 12)).show()
 	var filler := Control.new()
 	filler.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	stack.add_child(filler)
@@ -681,6 +711,8 @@ func _sidebar_action(app: String, item: String) -> void:
 				if _chats[index]["title"] == item:
 					show_ai_chat(index)
 					break
+	elif item == "CR #104":
+		app_requested.emit("cr:104")
 	elif item == "Checks":
 		show_cr_detail(104, "Checks")
 	else:
@@ -804,6 +836,8 @@ func show_change_request(filter_status: String = "All") -> void:
 				show_cr_detail(id)
 		)
 		content.add_child(button)
+		if id == 104 and _task_app == "changes":
+			_red_dot(button, Vector2(6, 6)).show()
 
 func _cr_header(record: Dictionary) -> void:
 	_window_stack.add_child(_label("#%d  %s" % [record["id"], record["title"]], 26, TEXT))
