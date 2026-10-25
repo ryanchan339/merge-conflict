@@ -76,6 +76,11 @@ var _active_chat: int = -1
 var _chat_input: LineEdit
 var _chat_pending: Dictionary = {}
 var _chat_mode: bool = false
+var _slack_posted: Dictionary = {}
+var _slack_draft: TextEdit
+var _slack_send: Button
+var _slack_pending_choice: int = -1
+var _cr_activity: Array[Dictionary] = []
 var _chat_scroll: ScrollContainer
 
 
@@ -301,13 +306,18 @@ func show_card(card: Dictionary) -> void:
 	if _app == "changes":
 		_cr_header(_current_cr())
 	else:
-		_add_app_heading(str(card.get("title", "Your task")))
+		_add_app_heading(_slack_channel if _app == "slack" else str(card.get("title", "Your task")))
 	if _app == "ai":
 		_window_stack.add_child(_label("✦ BatchGPT · Feature conversation", 17, TEAL))
 	elif _app == "slack":
 		_window_stack.add_child(_label(_slack_channel + " · Today", 17, MUTED))
 	var content := _scroll_content()
-	_add_message(content, str(card.get("body", "")))
+	if _app == "changes" and _stage != "incident":
+		_cr_conversation(content, _current_cr(), _stage != "feature")
+	elif _app == "slack":
+		_slack_task_thread(content, card)
+	else:
+		_add_message(content, str(card.get("body", "")))
 	var decision: String = str(card.get("decision", ""))
 	if not decision.is_empty():
 		var question := _body("[b]" + decision + "[/b]")
@@ -317,14 +327,26 @@ func show_card(card: Dictionary) -> void:
 		question.add_theme_font_override("bold_font", question_font)
 		question.add_theme_color_override("default_color", _accent)
 		content.add_child(question)
+	var choice_parent: VBoxContainer = content
+	if _app == "slack":
+		choice_parent = VBoxContainer.new()
+		choice_parent.add_theme_constant_override("separation", 5)
+		_window_stack.add_child(choice_parent)
 	var choices: Array = card.get("choices", [])
 	_choice_count = choices.size()
 	for index: int in range(choices.size()):
-		var button := _button(str(choices[index].get("label", "Continue working.")))
-		button.custom_minimum_size.y = 56
+		var button := _button(_slack_reply_text(index) if _app == "slack" else str(choices[index].get("label", "Continue working.")))
+		button.set_meta("action_text", str(choices[index].get("label", "")))
+		button.custom_minimum_size.y = 41 if _app == "slack" else 56
+		if _app == "slack":
+			button.add_theme_font_size_override("font_size", 17)
 		button.alignment = HORIZONTAL_ALIGNMENT_LEFT
-		button.pressed.connect(_select.bind(index))
-		content.add_child(button)
+		button.pressed.connect(_draft_slack_reply.bind(index) if _app == "slack" else _select.bind(index))
+		choice_parent.add_child(button)
+	if _app == "slack":
+		_build_slack_composer()
+		_scroll_thread_to_end(content)
+
 
 
 func show_feedback(text: String, changes: Dictionary = {}) -> void:
@@ -332,9 +354,18 @@ func show_feedback(text: String, changes: Dictionary = {}) -> void:
 	_feedback = true
 	_choice_count = 0
 	_build_app_shell(_app)
-	_add_app_heading("Message delivered." if _app == "slack" else ("Change updated." if _app == "changes" else "BatchGPT replied."))
+	if _app == "changes" and _stage != "incident":
+		_cr_header(_current_cr())
+	else:
+		_add_app_heading(_slack_channel if _app == "slack" else "BatchGPT replied.")
 	var content := _scroll_content()
-	if not text.is_empty():
+	if _app == "slack":
+		_slack_task_thread(content, _last_card)
+		content.add_child(_label("Workspace update", 16, MUTED))
+	elif _app == "changes" and _stage != "incident":
+		_cr_activity.append({"author":"Changes bot", "text":text.split("\n\n")[0]})
+		_cr_conversation(content, _current_cr(), _stage != "feature")
+	if not text.is_empty() and (_app != "changes" or _stage == "incident"):
 		_add_message(content, text.split("\n\n")[0])
 	var change_row := HFlowContainer.new()
 	change_row.add_theme_constant_override("h_separation", 18)
@@ -367,13 +398,19 @@ func forward_input(event: InputEvent) -> bool:
 		var key: InputEventKey = event
 		if not key.pressed or key.echo:
 			return false
+		if _app == "slack" and not _feedback and key.keycode == KEY_ENTER and _slack_pending_choice >= 0:
+			_send_slack_reply()
+			return true
 		if _feedback and (key.keycode == KEY_ENTER or key.keycode == KEY_KP_ENTER):
 			continue_pressed.emit()
 			return true
 		if _card_open and not _feedback and key.keycode >= KEY_1 and key.keycode <= KEY_9:
 			var index: int = key.keycode - KEY_1
 			if index < _choice_count:
-				_select(index)
+				if _app == "slack":
+					_draft_slack_reply(index)
+				else:
+					_select(index)
 				return true
 		return false
 	if not event is InputEventMouse:
@@ -571,6 +608,9 @@ func _activate_notification() -> void:
 
 func _build_app_shell(app: String) -> void:
 	_chat_input = null
+	_slack_draft = null
+	_slack_send = null
+	_slack_pending_choice = -1
 	_chat_mode = false
 	_mark_app_read(app)
 	var palettes: Dictionary = {
@@ -814,7 +854,13 @@ func show_slack(channel: String = "# engineering", route_task: bool = true) -> v
 		scroll.scroll_vertical = int(scroll.get_v_scroll_bar().max_value)
 
 func _current_cr() -> Dictionary:
-	return {"id":104, "title":"Save coffee favorites", "author":"You", "branch":"intern/save-favorites", "status":_cr_status, "added":32, "removed":4, "files":2, "comments":[["You", "Save remembers a favorite. It must never place an order."], ["Maya", "What happens when a guest double-taps? Please check before merging."]], "diff":"  When Save is clicked\n+ Remember the selected favorite\n+ Ask guests to sign in\n- Place a coffee order\n+ Ignore a repeated tap", "checks":["Favorites: " + ("passed" if _work_flags.get("tested", false) else "pending"), "Guests: " + ("passed" if _work_flags.get("tested", false) else "pending"), "Double-tap: " + ("passed" if _work_flags.get("tested", false) else "pending")]}
+	var diff: String = "  When Save is clicked\n+ Remember the selected favorite\n+ Ask guests to sign in\n- Place a coffee order\n+ Ignore a repeated tap"
+	if not _work_flags.get("tested", false):
+		if _work_flags.get("vague_prompt", false):
+			diff = "  When Save is clicked\n+ Remember the selected favorite\n+ Place a coffee order immediately\n  Guest and repeated-tap rules: not specified"
+		elif _work_flags.get("overbuilt", false):
+			diff = "  When Save is clicked\n+ Open the coffee metaverse\n+ Mint one virtual lid\n+ Post a drink to the social feed\n  Original favorites behavior: not verified"
+	return {"id":104, "title":"Save coffee favorites", "author":"You", "branch":"intern/save-favorites", "status":_cr_status, "added":32, "removed":4, "files":2, "comments":[["You", "Save remembers a favorite. It must never place an order."], ["Maya", "What happens when a guest double-taps? Please check before merging."]], "diff":diff, "checks":["Favorites: " + ("passed" if _work_flags.get("tested", false) else "pending"), "Guests: " + ("passed" if _work_flags.get("tested", false) else "pending"), "Double-tap: " + ("passed" if _work_flags.get("tested", false) else "pending")]}
 
 func show_change_request(filter_status: String = "All") -> void:
 	var content := _browse_start("changes", "Change requests")
@@ -877,9 +923,7 @@ func show_cr_detail(id: int, tab: String = "Conversation") -> void:
 		for check: String in record["checks"]:
 			_add_message(content, check)
 	else:
-		for comment: Array in record["comments"]:
-			content.add_child(_label(str(comment[0]) + " commented", 17, MUTED))
-			_add_message(content, str(comment[1]))
+		_cr_conversation(content, record, int(record["id"]) != 104 or _stage not in ["standup", "mentor", "feature"])
 
 func show_ai_idle() -> void:
 	show_ai_chat(_active_chat)
@@ -942,8 +986,126 @@ func _send_chat() -> void:
 		show_ai_chat(index)
 
 
+func _scroll_thread_to_end(content: Control) -> void:
+	await get_tree().process_frame
+	await get_tree().process_frame
+	if is_instance_valid(content):
+		var scroll := content.get_parent() as ScrollContainer
+		scroll.scroll_vertical = int(scroll.get_v_scroll_bar().max_value)
+
+func _slack_reply_text(index: int) -> String:
+	var title: String = str(_last_card.get("title", ""))
+	if title == "Maya assigned you a feature":
+		return ["Can I come over and clarify what Save should do?", "Should Save only remember a favorite, or also place an order? What should guests see?", "I'll build from the ticket as written and share a draft soon."][index]
+	if title == "Clarify the Save feature" and index == 0:
+		return "Got it: save one favorite, never charge, and ask guests to sign in. I'll build that."
+	if title == "Your question for Maya is still pending":
+		return "I'm coming over to your desk now."
+	if title == "Sam is waiting for your help":
+		return "I'm coming over to look at the discount with you."
+	return str(_last_card["choices"][index]["label"])
+
+func _plain_message(parent: Control, author: String, text: String, color: Color = Color("f7f3f8")) -> void:
+	var box := _panel(color, 9)
+	parent.add_child(box)
+	var stack := VBoxContainer.new()
+	stack.add_theme_constant_override("separation", 6)
+	box.add_child(stack)
+	stack.add_child(_label(author, 16, MUTED))
+	var label := _label(text, 20, TEXT)
+	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	stack.add_child(label)
+
+func _slack_task_thread(parent: Control, card: Dictionary) -> void:
+	var incoming: String = str(card.get("title", ""))
+	var messages: Dictionary = {
+		"Maya assigned you a feature":"Hey! The Save favorites ticket is yours. The description says ‘make it intuitive.’ Before you start: what do you need to know?",
+		"Clarify the Save feature":"Save should only remember a favorite. Guests must sign in, and tapping twice must never place an order. Can you confirm the scope before you build?",
+		"Sam needs help before the demo":"Hey, could you take a look? My discount applies twice and some coffees cost negative money. The demo is soon. Finance is typing in all caps.",
+		"Your question for Maya is still pending":"I'll be at my desk. Come over and we can go through the ticket together.",
+		"Sam is waiting for your help":"I'm at my desk with the discount bug open. Come over when you're ready."
+	}
+	if not _feedback and not _slack_posted.has(incoming):
+		_slack_posted[incoming] = true
+		var message := {"sender":_slack_channel + " · Direct message", "time":"Today " + _menu_clock.text.right(5), "text":str(messages.get(incoming, card.get("body", "")))}
+		if not _messages.is_empty() and _messages.back()["sender"] == message["sender"] and _messages.back().get("time", "") == message["time"]:
+			_messages[_messages.size() - 1] = message
+		else:
+			_messages.append(message)
+	# A small amount of history keeps the live conversation readable.
+	var history: Array[Dictionary] = []
+	for message: Dictionary in _messages:
+		if str(message["sender"]).contains(_slack_channel) and (str(message["sender"]).contains("Direct message") or str(message["sender"]).begins_with("You")):
+			history.append(message)
+	for message: Dictionary in history.slice(maxi(0, history.size() - 3)):
+		_plain_message(parent, str(message["sender"]).split(" · ")[0] + " · " + str(message.get("time", "Today")), str(message["text"]))
+
+func _build_slack_composer() -> void:
+	var row := HBoxContainer.new()
+	_window_stack.add_child(row)
+	_slack_draft = TextEdit.new()
+	_slack_draft.name = "SlackReplyComposer"
+	_slack_draft.placeholder_text = "Choose a reply above…"
+	_slack_draft.editable = false
+	_slack_draft.custom_minimum_size = Vector2(0, 74)
+	_slack_draft.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_slack_draft.add_theme_font_size_override("font_size", 18)
+	_slack_draft.add_theme_color_override("font_readonly_color", _ink)
+	_slack_draft.add_theme_stylebox_override("read_only", _box(Color.WHITE, 9, _line))
+	row.add_child(_slack_draft)
+	_slack_send = _button("Send", true)
+	_slack_send.disabled = true
+	_slack_send.pressed.connect(_send_slack_reply)
+	row.add_child(_slack_send)
+
+func _draft_slack_reply(index: int) -> void:
+	if _feedback or not is_instance_valid(_slack_draft):
+		return
+	_slack_pending_choice = index
+	_slack_draft.text = _slack_reply_text(index)
+	_slack_send.disabled = false
+
+func _send_slack_reply() -> void:
+	if _slack_pending_choice < 0 or _feedback:
+		return
+	_select(_slack_pending_choice)
+
+func _cr_conversation(parent: Control, record: Dictionary, reviewed: bool) -> void:
+	var description: String = "Adds a Save button to the drink page. Save remembers a favorite without placing an order. Guests should sign in first."
+	if bool(_work_flags.get("vague_prompt", false)):
+		description = "AI-generated Save button. The draft remembers a drink and also places a coffee order. The AI calls this proactive delight. Guest behavior has not been checked."
+	elif bool(_work_flags.get("overbuilt", false)):
+		description = "AI-generated favorites update, plus a social feed, virtual lids, and coffee coins. The original Save behavior is somewhere in the 34 new screens."
+	_plain_message(parent, str(record["author"]) + " opened this change · Original description", description if int(record["id"]) == 104 else str(record["title"]), Color.WHITE)
+	var code := _panel(Color("f0f3f6"), 7)
+	parent.add_child(code)
+	var lines := VBoxContainer.new()
+	lines.add_theme_constant_override("separation", 4)
+	code.add_child(lines)
+	lines.add_child(_label("drink_page / Save behavior", 16, MUTED))
+	for line: String in str(record["diff"]).split("\n"):
+		var label := _label(line, 18, Color("18734d") if line.begins_with("+") else (Color("bd3a4a") if line.begins_with("-") else _ink))
+		label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		lines.add_child(label)
+	if int(record["id"]) != 104:
+		for comment: Array in record["comments"]:
+			_plain_message(parent, str(comment[0]) + " commented", str(comment[1]), Color.WHITE)
+		return
+	if reviewed:
+		_plain_message(parent, "Maya requested changes · Save behavior", "Does Save only remember a favorite, or can this path also place an order? Please attach a check showing that nobody is charged.", Color("fff9ed"))
+		_plain_message(parent, "Maya · Guest and repeated taps · Unresolved" if not _work_flags.get("tested", false) else "Maya · Guest and repeated taps · Resolved", "What happens when a guest taps Save twice? Please check signed-in, signed-out, and double-tap behavior before merging.", Color("fff9ed"))
+	if _work_flags.get("review_context", false):
+		_plain_message(parent, "Maya added a checklist", "Remember one favorite. Charge nobody. Ask guests to sign in, even after a second tap.", Color.WHITE)
+	for event: Dictionary in _cr_activity:
+		_plain_message(parent, str(event["author"]), str(event["text"]), Color.WHITE)
+
 func _select(index: int) -> void:
 	if not _feedback and _card_open:
+		var reply: String = str(_last_card.get("choices", [])[index].get("label", ""))
+		if _app == "slack":
+			_messages.append({"sender":"You · " + _slack_channel, "time":"Today " + _menu_clock.text.right(5), "text":_slack_reply_text(index)})
+		elif _app == "changes":
+			_cr_activity.append({"author":"You · Review response", "text":reply})
 		choice_selected.emit(index)
 
 
