@@ -8,7 +8,7 @@ if (-not (Test-Path -LiteralPath $enginePath)) {
 if ($LASTEXITCODE -ne 0) { throw 'Project import failed.' }
 & $enginePath --headless --path $projectRoot -- --smoke-test
 if ($LASTEXITCODE -ne 0) { throw 'Workday progression failed.' }
-foreach ($testName in @('story_test.gd', 'world_test.gd', 'input_test.gd', 'desk_interaction_test.gd', 'kitchen_interaction_test.gd', 'office_interaction_test.gd')) {
+foreach ($testName in @('story_test.gd', 'world_test.gd', 'input_test.gd', 'desk_interaction_test.gd', 'kitchen_interaction_test.gd', 'office_interaction_test.gd', 'engineering_cases_test.gd', 'schedule_test.gd', 'campaign_test.gd')) {
     & $enginePath --headless --path $projectRoot --script (Join-Path $projectRoot ('tests\' + $testName))
     if ($LASTEXITCODE -ne 0) { throw ('Failed: ' + $testName) }
 }
