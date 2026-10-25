@@ -87,7 +87,7 @@ func _run() -> void:
 	var decision_copy: String = ""
 	for label: Node in game.computer._window.find_children("*", "RichTextLabel", true, false):
 		decision_copy += str(label.text)
-	_check(decision_copy.contains(str(game.current_card["decision"])), "The computer displays the explicit decision question next to the backstory")
+	_check(not decision_copy.contains(str(game.current_card["decision"])), "Choices appear without a redundant question explaining the available options")
 
 	# History and free chat must never advance the assigned work.
 	var browsing_stats: Dictionary = game.stats.duplicate(true)
@@ -207,7 +207,7 @@ func _run() -> void:
 	_check(not game.phone.is_open() and game.office._phone_root.visible, "Escape puts the phone back on the desk")
 	_check(game.seated and game.computer.active, "Closing the phone returns input to the seated computer")
 	await _click_monitor_button(game.computer._slack_button)
-	_check(game.computer._app == "slack" and game.computer._accent == Color("68406e") and not game.computer._slack_badge.visible, "Slack opens its purple messaging workspace and clears the unread badge")
+	_check(game.computer._app == "slack" and game.computer._accent == Color("68406e") and game.computer._slack_badge.visible, "Slack keeps a task dot while the triage requests remain unresolved")
 	await _click_monitor_button(_find_button(game.computer._window, "# reviews"))
 	_check(game.computer._slack_channel == "# reviews", "Slack's channel sidebar opens the selected review feed")
 	var slack_copy: String = ""
@@ -242,6 +242,19 @@ func _run() -> void:
 	await create_timer(0.55).timeout
 	await _click_monitor_button(_find_button(game.computer._root, "Open my task."))
 	await _click_monitor_button(_find_button(game.computer._window, "I'll test all three cases, then merge CR #104."))
+	_check(not game.flags.get("cr_merged", false), "The safe merge opens playable checks before merging")
+	await _click_monitor_button(_find_button(game.computer._window, "Save favorite"))
+	await _click_monitor_button(_find_button(game.computer._window, "Save favorite"))
+	_check(game.computer._sandbox_result.contains("BUG"), "Two rapid taps expose the duplicate favorite bug")
+	await _click_monitor_button(_find_button(game.computer._window, "Edit Save behavior"))
+	await _click_monitor_button(_find_button(game.computer._window, "Remember a favorite; ask guests to sign in; ignore repeated taps."))
+	await _click_monitor_button(_find_button(game.computer._window, "Save favorite"))
+	await _click_monitor_button(_find_button(game.computer._window, "Save favorite"))
+	await _click_monitor_button(_find_button(game.computer._window, "Sign out"))
+	await _click_monitor_button(_find_button(game.computer._window, "Save favorite"))
+	_check(game.flags.get("sandbox_complete", false) and game.computer._sandbox_orders == 0, "All three actual preview checks pass without charging anyone")
+	await _click_monitor_button(_find_button(game.computer._window, "Back to CR #104"))
+	await _click_monitor_button(_find_button(game.computer._window, "I'll test all three cases, then merge CR #104."))
 	_check(bool(game.flags.get("cr_merged", false)) and bool(game.flags.get("tested", false)) and game.computer._cr_status == "Merged", "The reviewed merge records tests and updates the CR status")
 	await _click_monitor_button(_find_button(game.computer._window, "Continue working."))
 	await _click_monitor_button(_find_button(game.computer._root, "Open my task."))
@@ -257,6 +270,23 @@ func _run() -> void:
 	await _click_monitor_button(_find_button(game.computer._window, "Continue working."))
 	await _click_monitor_button(_find_button(game.computer._root, "Open my task."))
 	_check(game.stage_index == 4 and game.current_card_id == "review_followup" and bool(game.flags.get("early_merge", false)), "An early merge leads to a follow-up task instead of pretending review happened")
+	game.flags.erase("interruptions_done")
+	game._desk_app("triage")
+	_check(game.current_card_id == "interruptions", "The triage channel opens simultaneous meeting, build, and teammate requests")
+	await _click_monitor_button(_find_button(game.computer._window, "I'll fix the demo build first and ask Jordan to move the meeting."))
+	await _click_monitor_button(game.computer._slack_send)
+	_check(game.flags.get("prioritized_build", false) and game.flags.get("interruptions_done", false), "Sending a priority decision resolves competing requests with consequences")
+	game.flags["promised_sam"] = true
+	game.flags.erase("kept_promise")
+	game.flags.erase("broke_promise")
+	game._stand_up()
+	game.hud.hide_modal()
+	game._set_stage(6)
+	game._interact("intern")
+	_check(game.current_card_id == "promise_help", "Sam recalls an outstanding promise when visited later")
+	game._choose(0)
+	_check(game.flags.get("kept_promise", false) and game._memory_line("Sam").contains("came back"), "Keeping the promise changes Sam's later dialogue")
+	game.hud.hide_modal()
 	game.hud.set_conversation(true)
 	game.hud.show_card({"title":"Let's discuss the feature.", "body":"Maya asks what you learned.", "choices":[{"label":"I checked the guest and signed-in cases."}]})
 	await process_frame
