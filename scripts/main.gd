@@ -495,7 +495,7 @@ func _sit_down(pick_up_phone: bool = false) -> void:
 			computer.show_desktop(str(OBJECTIVES[STAGES[stage_index]][0]))
 			_open_phone()
 		else:
-			_desk_work()
+			computer.show_desktop(str(OBJECTIVES[STAGES[stage_index]][0]))
 	, CONNECT_ONE_SHOT)
 
 func _stand_up() -> void:
@@ -777,11 +777,14 @@ func _capture_sequence() -> void:
 	_set_stage(1)
 	_sit_down()
 	await get_tree().create_timer(0.5).timeout
+	await _save_capture("16-desktop")
+	_desk_work()
 	await _save_capture("12-slack-ticket")
 	_stand_up()
 	_set_stage(2)
 	_sit_down()
 	await get_tree().create_timer(0.6).timeout
+	_desk_work()
 	await _save_capture("03-computer")
 	_choose(1)
 	await _save_capture("04-computer-feedback")
@@ -853,6 +856,8 @@ func _smoke_test() -> void:
 			_interact(target_id)
 		if seating:
 			await get_tree().create_timer(0.5).timeout
+		if seated:
+			_desk_work()
 		var guard: int = 0
 		while (hud.is_modal_open() or decision_open or pending_advance or not awaiting_person.is_empty()) and guard < 16:
 			if not awaiting_person.is_empty() and not decision_open and not hud.is_modal_open():

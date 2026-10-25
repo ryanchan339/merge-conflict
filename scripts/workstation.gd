@@ -40,6 +40,21 @@ var _cr_summary: Label
 var _slack_button: Button
 var _unread: int = 0
 var _app: String = ""
+var _menu_app: Label
+var _menu_clock: Label
+var _slack_badge: Label
+var _window_title: Label
+var _dock_buttons: Dictionary = {}
+var _dock_dots: Dictionary = {}
+var _icon_cache: Dictionary = {}
+var _ink := Color("202332")
+var _soft := Color("6f7282")
+var _accent := Color("1264a3")
+var _paper := Color("ffffff")
+var _line := Color("e7e7ec")
+var _zoomed: bool = false
+var _work_flags: Dictionary = {}
+var _slack_channel: String = "# engineering"
 
 
 func setup(surface: MeshInstance3D, camera: Camera3D) -> void:
@@ -68,119 +83,160 @@ func _build_desktop() -> void:
 	_root.size = Vector2(SIZE)
 	var theme := Theme.new()
 	theme.default_font = UIFont
-	theme.default_font_size = 22
-	theme.set_color("font_color", "Label", TEXT)
-	theme.set_color("font_color", "Button", TEXT)
-	theme.set_color("font_hover_color", "Button", Color.WHITE)
-	theme.set_color("font_pressed_color", "Button", TEXT)
-	theme.set_color("font_focus_color", "Button", TEXT)
-	theme.set_stylebox("normal", "Button", _box(Color("263e4b"), 10))
-	theme.set_stylebox("hover", "Button", _box(Color("325b63"), 10, TEAL))
-	theme.set_stylebox("pressed", "Button", _box(Color("1e4c4d"), 10))
-	theme.set_stylebox("focus", "Button", _box(Color.TRANSPARENT, 10, TEAL))
+	theme.default_font_size = 21
 	_root.theme = theme
 	_viewport.add_child(_root)
-	var background := ColorRect.new()
-	background.color = BG
-	background.size = Vector2(SIZE)
-	_root.add_child(background)
-	var glow := _panel(Color("18353d"), 180)
-	glow.position = Vector2(650, 230)
-	glow.size = Vector2(660, 350)
-	_root.add_child(glow)
-	var ring := _label("sb", 116, Color("26515a"))
-	ring.position = Vector2(1090, 445)
-	_root.add_child(ring)
-	var topbar := _panel(Color("152630"), 0)
-	topbar.position = Vector2.ZERO
-	topbar.size = Vector2(1440, 46)
-	_root.add_child(topbar)
-	var os := _label("●   Small Batch", 19, TEAL)
-	os.position = Vector2(28, 10)
-	_root.add_child(os)
-	var status := _label("Workspace  /  Intern", 18, MUTED)
-	status.position = Vector2(1175, 11)
-	_root.add_child(status)
-	var greeting := _label("Your inbox is your quest log.", 44, TEXT)
-	greeting.position = Vector2(105, 155)
+	var wallpaper := TextureRect.new()
+	wallpaper.texture = _svg_texture("""<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="810"><defs><linearGradient id="sky" x2="0.9" y2="1"><stop stop-color="#251b63"/><stop offset=".5" stop-color="#a07dcc"/><stop offset="1" stop-color="#f5b0a4"/></linearGradient><linearGradient id="hill" x2=".6" y2="1"><stop stop-color="#ffb7a0"/><stop offset="1" stop-color="#bf4c81"/></linearGradient><linearGradient id="blue" x2=".9" y2="1"><stop stop-color="#6668dc"/><stop offset="1" stop-color="#172c6d"/></linearGradient></defs><rect width="1440" height="810" fill="url(#sky)"/><path d="M-80 740C190 270 350 610 610 300S1020 140 1530 80V850H-80Z" fill="url(#hill)"/><path d="M-100 820C240 400 490 850 810 470S1130 350 1530 180V850Z" fill="url(#blue)"/><path d="M120 850C450 590 620 960 980 650S1250 560 1500 480V850Z" fill="#2e2a6d" opacity=".7"/></svg>""")
+	wallpaper.size = Vector2(SIZE)
+	wallpaper.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_root.add_child(wallpaper)
+	var menubar := _panel(Color(0.96, 0.94, 1, 0.87), 0)
+	menubar.position = Vector2.ZERO
+	menubar.size = Vector2(1440, 36)
+	_root.add_child(menubar)
+	var brand := _label("●", 24, Color("332b51"))
+	brand.position = Vector2(22, 1)
+	_root.add_child(brand)
+	_menu_app = _label("Finder", 18, Color("29223c"))
+	_menu_app.position = Vector2(65, 6)
+	_root.add_child(_menu_app)
+	var menu := _label("File     Edit     View     Go     Window     Help", 17, Color("42394f"))
+	menu.position = Vector2(215, 7)
+	_root.add_child(menu)
+	_menu_clock = _label("100%   •   Fri 09:00", 16, Color("332b51"))
+	_menu_clock.position = Vector2(1210, 7)
+	_root.add_child(_menu_clock)
+	var greeting := _label("Small Batch", 54, Color.WHITE)
+	greeting.position = Vector2(65, 155)
 	_root.add_child(greeting)
-	_desktop_task = _label("Your task", 24, MUTED)
-	_desktop_task.position = Vector2(108, 226)
-	_desktop_task.size = Vector2(1000, 42)
-	_root.add_child(_desktop_task)
-	var open_task := _button("Open my task.", true)
-	open_task.position = Vector2(108, 306)
-	open_task.size = Vector2(290, 76)
-	open_task.pressed.connect(_open_saved_task)
-	_root.add_child(open_task)
-	var inbox := _button("Open Slack.")
-	inbox.position = Vector2(420, 306)
-	inbox.size = Vector2(270, 76)
-	inbox.pressed.connect(_navigate_app.bind("slack"))
-	_root.add_child(inbox)
-	var changes := _button("Open Changes.")
-	changes.position = Vector2(712, 306)
-	changes.size = Vector2(290, 76)
-	changes.pressed.connect(_navigate_app.bind("changes"))
-	_root.add_child(changes)
-	_cr_summary = _label("CR #104  /  Not started", 23, TEAL)
-	_cr_summary.position = Vector2(108, 425)
-	_root.add_child(_cr_summary)
-	_window = _panel(PANEL, 17)
-	_window.position = Vector2(89, 74)
-	_window.size = Vector2(1262, 628)
+	var subtitle := _label("Your slightly overcaffeinated workspace.", 22, Color("f4eafa"))
+	subtitle.position = Vector2(69, 225)
+	_root.add_child(subtitle)
+	var note := _panel(Color(0.98, 0.96, 1, 0.88), 18)
+	note.position = Vector2(65, 520)
+	note.size = Vector2(460, 138)
+	_root.add_child(note)
+	var note_margin := _margin(24, 18, 24, 18)
+	note.add_child(note_margin)
+	var note_stack := VBoxContainer.new()
+	note_stack.add_theme_constant_override("separation", 8)
+	note_margin.add_child(note_stack)
+	note_stack.add_child(_label("UP NEXT", 14, Color("766a91")))
+	_desktop_task = _label("Open Tasks to start your work.", 23, Color("302544"))
+	_desktop_task.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	note_stack.add_child(_desktop_task)
+	_cr_summary = _label("CR #104  /  Not started", 17, Color("736585"))
+	note_stack.add_child(_cr_summary)
+	for index: int in range(4):
+		var app: String = ["tasks", "slack", "changes", "ai"][index]
+		var label: String = ["Tasks", "Slack", "Changes", "BatchGPT"][index]
+		var shortcut := _icon_button(app, "Open %s." % label)
+		shortcut.position = Vector2(1280, 80 + index * 143)
+		shortcut.size = Vector2(76, 76)
+		shortcut.pressed.connect(_launch_icon.bind(app))
+		_root.add_child(shortcut)
+		var caption := _label(label, 18, Color.WHITE)
+		caption.position = Vector2(1245, 163 + index * 143)
+		caption.size = Vector2(145, 28)
+		caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		caption.add_theme_color_override("font_shadow_color", Color("34254c"))
+		caption.add_theme_constant_override("shadow_offset_y", 1)
+		_root.add_child(caption)
+	_window = _panel(Color.WHITE, 13)
+	_window.position = Vector2(65, 58)
+	_window.size = Vector2(1310, 638)
 	_root.add_child(_window)
-	var window_margin := _margin(30, 23, 30, 26)
-	_window.add_child(window_margin)
-	_window_stack = VBoxContainer.new()
-	_window_stack.add_theme_constant_override("separation", 17)
-	window_margin.add_child(_window_stack)
-	var toolbar := _panel(Color("182b36"), 15)
-	toolbar.position = Vector2(89, 724)
-	toolbar.size = Vector2(1262, 64)
-	_root.add_child(toolbar)
-	var toolbar_margin := _margin(9, 7, 9, 7)
-	toolbar.add_child(toolbar_margin)
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 8)
-	toolbar_margin.add_child(row)
-	var work := _button("Open my task.")
-	work.custom_minimum_size.x = 190
-	work.pressed.connect(_open_saved_task)
-	row.add_child(work)
-	_slack_button = _button("Open Slack.")
-	_slack_button.custom_minimum_size.x = 145
-	_slack_button.pressed.connect(_navigate_app.bind("slack"))
-	row.add_child(_slack_button)
-	var cr_button := _button("Open Changes.")
-	cr_button.custom_minimum_size.x = 170
-	cr_button.pressed.connect(_navigate_app.bind("changes"))
-	row.add_child(cr_button)
-	var ai := _button("Use BatchGPT.")
-	ai.custom_minimum_size.x = 170
-	ai.pressed.connect(_navigate_app.bind("ai"))
-	row.add_child(ai)
-	var phone := _button("Open Loop on my phone.")
-	phone.custom_minimum_size.x = 265
-	phone.pressed.connect(func() -> void: phone_requested.emit())
-	row.add_child(phone)
-	var space := Control.new()
-	space.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	row.add_child(space)
-	var stand := _button("Stand up from my desk.")
-	stand.custom_minimum_size.x = 255
-	stand.pressed.connect(func() -> void: close_requested.emit())
-	row.add_child(stand)
-	for child: Node in row.get_children():
-		if child is Button:
-			(child as Button).add_theme_font_size_override("font_size", 19)
-	_cursor = _label("↖", 31, Color("c1ffdf"))
+	var dock := _panel(Color(0.96, 0.94, 1, 0.72), 21)
+	dock.position = Vector2(420, 714)
+	dock.size = Vector2(600, 86)
+	dock.z_index = 5
+	_root.add_child(dock)
+	var dock_margin := _margin(18, 7, 18, 5)
+	dock.add_child(dock_margin)
+	var dock_row := HBoxContainer.new()
+	dock_row.add_theme_constant_override("separation", 17)
+	dock_margin.add_child(dock_row)
+	var actions: Dictionary = {"tasks":"Open my task.", "slack":"Open Slack.", "changes":"Open Changes.", "ai":"Use BatchGPT.", "phone":"Open Loop on my phone.", "stand":"Stand up from my desk."}
+	for app: String in actions:
+		var cell := VBoxContainer.new()
+		cell.add_theme_constant_override("separation", 0)
+		dock_row.add_child(cell)
+		var icon := _icon_button(app, str(actions[app]))
+		icon.custom_minimum_size = Vector2(66, 66)
+		icon.pressed.connect(_launch_icon.bind(app))
+		cell.add_child(icon)
+		_dock_buttons[app] = icon
+		var dot := _label("•", 13, Color("49395a"))
+		dot.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		dot.custom_minimum_size = Vector2(66, 8)
+		dot.hide()
+		cell.add_child(dot)
+		_dock_dots[app] = dot
+	_slack_button = _dock_buttons["slack"]
+	_slack_badge = _label("", 13, Color.WHITE)
+	_slack_badge.position = Vector2(44, 0)
+	_slack_badge.size = Vector2(25, 25)
+	_slack_badge.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	var badge_style := _box(Color("d54d62"), 12)
+	badge_style.content_margin_left = 0
+	badge_style.content_margin_right = 0
+	_slack_badge.add_theme_stylebox_override("normal", badge_style)
+	_slack_button.add_child(_slack_badge)
+	_cursor = _label("↖", 29, Color("182332"))
+	_cursor.z_index = 10
 	_cursor.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_cursor.add_theme_color_override("font_shadow_color", Color("0a141b"))
+	_cursor.add_theme_color_override("font_shadow_color", Color.WHITE)
 	_cursor.add_theme_constant_override("shadow_offset_x", 1)
-	_cursor.add_theme_constant_override("shadow_offset_y", 2)
+	_cursor.add_theme_constant_override("shadow_offset_y", 1)
 	_root.add_child(_cursor)
 	_cursor.hide()
+
+
+func _launch_icon(app: String) -> void:
+	if app == "tasks":
+		_open_saved_task()
+	elif app == "phone":
+		phone_requested.emit()
+	elif app == "stand":
+		close_requested.emit()
+	else:
+		_navigate_app(app)
+
+
+func _svg_texture(svg: String) -> ImageTexture:
+	var image := Image.new()
+	var result: Error = image.load_svg_from_string(svg)
+	if result != OK:
+		push_error("Could not render desktop artwork.")
+	return ImageTexture.create_from_image(image)
+
+
+func _icon_button(app: String, action: String) -> Button:
+	if not _icon_cache.has(app):
+		var art: Dictionary = {
+			"tasks":"<rect x='5' y='5' width='54' height='54' rx='15' fill='#eaa94e'/><path d='M16 23h13l5 5h16v22H16Z' fill='#fff0c4'/><path d='M16 23h16l4 5H16Z' fill='#ffe2a1'/><path d='m23 38 4 4 8-9' fill='none' stroke='#bc752d' stroke-width='4' stroke-linecap='round' stroke-linejoin='round'/>",
+			"slack":"<rect x='5' y='5' width='54' height='54' rx='15' fill='#fff'/><rect x='27' y='13' width='8' height='22' rx='4' fill='#36c5f0'/><rect x='13' y='27' width='22' height='8' rx='4' fill='#2eb67d'/><rect x='37' y='29' width='8' height='22' rx='4' fill='#ecb22e'/><rect x='29' y='37' width='22' height='8' rx='4' fill='#e01e5a'/><circle cx='17' cy='17' r='4' fill='#36c5f0'/><circle cx='47' cy='17' r='4' fill='#2eb67d'/><circle cx='47' cy='47' r='4' fill='#ecb22e'/><circle cx='17' cy='47' r='4' fill='#e01e5a'/>",
+			"changes":"<rect x='5' y='5' width='54' height='54' rx='15' fill='#258b64'/><path d='M22 45V19m0 14c0-9 20 3 20-14' fill='none' stroke='#fff' stroke-width='4'/><g fill='#258b64' stroke='#fff' stroke-width='3'><circle cx='22' cy='18' r='5'/><circle cx='22' cy='46' r='5'/><circle cx='42' cy='18' r='5'/></g>",
+			"ai":"<rect x='5' y='5' width='54' height='54' rx='15' fill='#138d85'/><path d='M16 18h32v23H30l-9 7v-7h-5Z' fill='#f2fffa'/><path d='m32 23 2.7 6.3L41 32l-6.3 2.7L32 41l-2.7-6.3L23 32l6.3-2.7Z' fill='#138d85'/>",
+			"phone":"<rect x='5' y='5' width='54' height='54' rx='15' fill='#292339'/><path d='M38 18v21a7 7 0 1 1-6-7V18Z' fill='#55e0d1'/><path d='M41 18v21a7 7 0 1 1-6-7V18Z' fill='#ff668e' opacity='.8'/><path d='M37 18c0 8 6 10 10 10' fill='none' stroke='#fff' stroke-width='4'/>",
+			"stand":"<rect x='5' y='5' width='54' height='54' rx='15' fill='#6383b1'/><path d='M18 15h23v35H18Z' fill='#eaf1fb'/><path d='M27 32h23m-8-8 8 8-8 8' fill='none' stroke='#34547f' stroke-width='4' stroke-linecap='round' stroke-linejoin='round'/>"
+		}
+		_icon_cache[app] = _svg_texture("<svg xmlns='http://www.w3.org/2000/svg' width='72' height='72' viewBox='0 0 64 64'>" + str(art.get(app, art["tasks"])) + "</svg>")
+	var button := Button.new()
+	button.icon = _icon_cache[app]
+	button.expand_icon = true
+	button.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	button.tooltip_text = action
+	button.set_meta("action_text", action)
+	button.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	for state: String in ["normal", "hover", "pressed", "focus"]:
+		var background: Color = Color(1, 1, 1, 0.23) if state == "hover" else (Color(1, 1, 1, 0.35) if state == "pressed" else Color.TRANSPARENT)
+		var style := _box(background, 15, Color(1, 1, 1, 0.7) if state == "focus" else Color.TRANSPARENT)
+		style.content_margin_left = 0
+		style.content_margin_right = 0
+		button.add_theme_stylebox_override(state, style)
+	return button
 
 
 func set_active(value: bool) -> void:
@@ -199,7 +255,8 @@ func show_desktop(task: String) -> void:
 	if task != _task:
 		_last_card.clear()
 	_task = task
-	_desktop_task.text = task
+	_desktop_task.text = "Open Tasks to continue your work." if _stage not in ["standup", "manager", "kitchen", "exit"] else task
+	_menu_app.text = "Finder"
 	_window.hide()
 	_card_open = false
 	_feedback = false
@@ -209,62 +266,48 @@ func show_card(card: Dictionary) -> void:
 	_app = str(card.get("app", "changes"))
 	if _app == "slack":
 		_unread = 0
+		var sender: String = str(card.get("speaker", "")).split(" · ")[0]
+		if sender in ["Maya", "Sam", "Jordan"]:
+			_slack_channel = sender
 		_refresh_inbox_badge()
 	_last_card = card.duplicate(true)
 	_task = str(card.get("title", _task))
-	_desktop_task.text = _task
 	_card_open = true
 	_feedback = false
 	_choice_count = 0
-	_clear_window()
-	_window.show()
-	var header := HBoxContainer.new()
-	_window_stack.add_child(header)
-	var app_name: String = str({"slack":"SLACK  /  DIRECT MESSAGE", "changes":"CHANGES  /  CR #104  /  " + _cr_status.to_upper(), "ai":"BATCHGPT  /  FEATURE TICKET"}.get(_app, "WORKSPACE"))
-	var name_label := _label(app_name, 17, TEAL)
-	name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	header.add_child(name_label)
-	var close := _button("Return to the desktop.")
-	close.custom_minimum_size = Vector2(245, 39)
-	close.add_theme_font_size_override("font_size", 18)
-	close.pressed.connect(func() -> void: show_desktop(_task))
-	header.add_child(close)
-	var title := _label(str(card.get("title", "Your task")), 32, TEXT)
-	title.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_window_stack.add_child(title)
+	_build_app_shell(_app)
+	_add_app_heading(str(card.get("title", "Your task")))
 	var content := _scroll_content()
-	content.add_child(_body(str(card.get("body", ""))))
+	_add_message(content, str(card.get("body", "")))
 	var choices: Array = card.get("choices", [])
 	_choice_count = choices.size()
-	for index in range(choices.size()):
-		var choice: Dictionary = choices[index]
-		var button := _button(str(choice.get("label", "Continue working.")))
-		button.custom_minimum_size.y = 66
+	for index: int in range(choices.size()):
+		var button := _button(str(choices[index].get("label", "Continue working.")))
+		button.custom_minimum_size.y = 56
 		button.alignment = HORIZONTAL_ALIGNMENT_LEFT
 		button.pressed.connect(_select.bind(index))
 		content.add_child(button)
 
 
 func show_feedback(text: String, changes: Dictionary = {}) -> void:
-	_clear_window()
 	_card_open = true
 	_feedback = true
 	_choice_count = 0
-	_window.show()
-	_window_stack.add_child(_label("%s  /  UPDATE" % str({"slack":"SLACK", "changes":"CHANGES", "ai":"BATCHGPT"}.get(_app, "WORKSPACE")), 17, TEAL))
+	_build_app_shell(_app)
+	_add_app_heading("Message delivered." if _app == "slack" else ("Change updated." if _app == "changes" else "BatchGPT replied."))
 	var content := _scroll_content()
 	if not text.is_empty():
-		content.add_child(_body(text.split("\n\n")[0]))
+		_add_message(content, text.split("\n\n")[0])
 	var change_row := HFlowContainer.new()
-	change_row.add_theme_constant_override("h_separation", 22)
+	change_row.add_theme_constant_override("h_separation", 18)
 	change_row.add_theme_constant_override("v_separation", 8)
 	content.add_child(change_row)
 	for key: String in ["delivery", "quality", "trust", "energy"]:
 		var delta: int = int(changes.get(key, 0))
 		if delta != 0:
-			change_row.add_child(_label("%s %+d" % [key.capitalize(), delta], 23, Color("97e5b4") if delta > 0 else Color("ffaaa0")))
+			change_row.add_child(_label("%s %+d" % [key.capitalize(), delta], 21, Color("18734d") if delta > 0 else Color("bd3a4a")))
 	if changes.is_empty():
-		change_row.add_child(_label("No stat changes.", 20, TEAL))
+		change_row.add_child(_label("No stat changes.", 18, MUTED))
 	var next := _button("Continue working.", true)
 	next.pressed.connect(func() -> void: continue_pressed.emit())
 	_window_stack.add_child(next)
@@ -278,6 +321,8 @@ func forward_input(event: InputEvent) -> bool:
 	if not active or not is_instance_valid(_camera) or not is_instance_valid(_surface):
 		return false
 	if event is InputEventKey:
+		if not _window.visible:
+			return false
 		var key: InputEventKey = event
 		if not key.pressed or key.echo:
 			return false
@@ -341,17 +386,21 @@ func _screen_point(screen_position: Vector2) -> Vector2:
 func _open_saved_task() -> void:
 	if _feedback:
 		_window.show()
+		_menu_app.text = str({"slack":"Slack", "changes":"Changes", "ai":"BatchGPT"}.get(_app, "Workspace"))
 		return
 	task_requested.emit()
 
 func _navigate_app(app: String) -> void:
 	if _feedback:
 		_window.show()
+		_menu_app.text = str({"slack":"Slack", "changes":"Changes", "ai":"BatchGPT"}.get(_app, "Workspace"))
 		return
 	app_requested.emit(app)
 
 func set_work_state(stage: String, flags: Dictionary, _awaiting_person: String) -> void:
 	_stage = stage
+	_work_flags = flags.duplicate()
+	_menu_clock.text = "100%   •   Fri " + str({"standup":"09:05", "mentor":"09:30", "feature":"10:00", "review_info":"11:15", "review":"11:30", "intern":"13:00", "manager":"14:30", "kitchen":"15:15", "incident":"15:17", "exit":"17:00"}.get(stage, "09:00"))
 	if not _notified.has(stage):
 		_notified[stage] = true
 		var updates: Dictionary = {
@@ -374,40 +423,200 @@ func set_work_state(stage: String, flags: Dictionary, _awaiting_person: String) 
 	_refresh_inbox_badge()
 
 func _refresh_inbox_badge() -> void:
-	_slack_button.text = "Slack (%d)." % _unread if _unread > 0 else "Open Slack."
+	_slack_badge.text = str(_unread)
+	_slack_badge.visible = _unread > 0
+	_slack_button.tooltip_text = "Open Slack. %d unread messages." % _unread
 
 func _read_only_window(app: String, title: String, body: String) -> void:
-	_app = app
-	_clear_window()
+	_app = "ai" if app == "batchgpt" else app
 	_card_open = false
 	_feedback = false
 	_choice_count = 0
-	_window.show()
-	var header := HBoxContainer.new()
-	_window_stack.add_child(header)
-	var app_label := _label(app.to_upper(), 17, TEAL)
-	app_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	header.add_child(app_label)
-	var close := _button("Return to the desktop.")
-	close.add_theme_font_size_override("font_size", 18)
-	close.custom_minimum_size = Vector2(245, 39)
-	close.pressed.connect(func() -> void: show_desktop(_task))
-	header.add_child(close)
-	_window_stack.add_child(_label(title, 30, TEXT))
+	_build_app_shell(_app)
+	_add_app_heading(title)
 	var content := _scroll_content()
-	content.add_child(_body(body))
+	_add_message(content, body)
 	var action := _button("Open my current task.", true)
 	action.pressed.connect(func() -> void: app_requested.emit("task"))
 	_window_stack.add_child(action)
 
-func show_slack() -> void:
+
+func _build_app_shell(app: String) -> void:
+	var palettes: Dictionary = {
+		"slack":["1e1d22", "797680", "68406e", "ffffff", "e9e6eb", "351538"],
+		"changes":["24292f", "6e7781", "238449", "f6f8fa", "d8dee4", "eef1f4"],
+		"ai":["243633", "7d8580", "158173", "fffefa", "e7e8e2", "f1f2eb"]
+	}
+	var palette: Array = palettes.get(app, palettes["changes"])
+	_ink = Color(str(palette[0]))
+	_soft = Color(str(palette[1]))
+	_accent = Color(str(palette[2]))
+	_paper = Color(str(palette[3]))
+	_line = Color(str(palette[4]))
+	var border := _box(_paper, 13, Color(1, 1, 1, 0.7))
+	border.shadow_color = Color(0.08, 0.05, 0.15, 0.28)
+	border.shadow_size = 17
+	border.shadow_offset = Vector2(0, 8)
+	border.content_margin_left = 0
+	border.content_margin_right = 0
+	_window.add_theme_stylebox_override("panel", border)
+	for child: Node in _window.get_children():
+		_window.remove_child(child)
+		child.queue_free()
+	var frame := VBoxContainer.new()
+	frame.add_theme_constant_override("separation", 0)
+	_window.add_child(frame)
+	var chrome := PanelContainer.new()
+	chrome.add_theme_stylebox_override("panel", _box(Color("f1eff3"), 12))
+	chrome.custom_minimum_size.y = 43
+	frame.add_child(chrome)
+	var titlebar := HBoxContainer.new()
+	titlebar.add_theme_constant_override("separation", 9)
+	chrome.add_child(titlebar)
+	for index: int in range(3):
+		var light := Button.new()
+		light.custom_minimum_size = Vector2(18, 18)
+		light.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		light.tooltip_text = ["Close this window.", "Minimize this window.", "Zoom this window."][index]
+		var color: Color = [Color("ff6059"), Color("ffbd2e"), Color("28c840")][index]
+		var light_style := _box(color, 10)
+		light_style.content_margin_left = 0
+		light_style.content_margin_right = 0
+		light.add_theme_stylebox_override("normal", light_style)
+		light.add_theme_stylebox_override("hover", _box(color.lightened(0.12), 10))
+		light.pressed.connect(_zoom_window if index == 2 else _minimize_window)
+		titlebar.add_child(light)
+	var app_name: String = str({"slack":"Slack", "changes":"Changes", "ai":"BatchGPT"}.get(app, "Workspace"))
+	_window_title = _label(app_name + "   —   Small Batch", 17, Color("57515e"))
+	_window_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_window_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	titlebar.add_child(_window_title)
+	var column := HBoxContainer.new()
+	column.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	column.add_theme_constant_override("separation", 0)
+	frame.add_child(column)
+	var sidebar := PanelContainer.new()
+	var side_style := _box(Color(str(palette[5])), 0)
+	side_style.content_margin_left = 0
+	side_style.content_margin_right = 0
+	sidebar.add_theme_stylebox_override("panel", side_style)
+	sidebar.custom_minimum_size.x = 218
+	column.add_child(sidebar)
+	_build_sidebar(sidebar, app)
+	var area := _margin(28, 22, 28, 22)
+	area.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	column.add_child(area)
+	_window_stack = VBoxContainer.new()
+	_window_stack.add_theme_constant_override("separation", 13)
+	area.add_child(_window_stack)
+	_menu_app.text = app_name
+	for key: String in _dock_dots:
+		_dock_dots[key].visible = key == app
+	_window.show()
+
+
+func _build_sidebar(parent: Control, app: String) -> void:
+	var margin := _margin(15, 22, 15, 18)
+	parent.add_child(margin)
+	var stack := VBoxContainer.new()
+	stack.add_theme_constant_override("separation", 9)
+	margin.add_child(stack)
+	var side_ink: Color = Color("f5eaf7") if app == "slack" else _ink
+	var side_muted: Color = Color("bc9bbf") if app == "slack" else _soft
+	stack.add_child(_label("Small Batch" if app == "slack" else ("coffee-app" if app == "changes" else "BatchGPT"), 23, side_ink))
+	stack.add_child(_label("Intern workspace", 14, side_muted))
+	var spacer := Control.new()
+	spacer.custom_minimum_size.y = 17
+	stack.add_child(spacer)
+	var links: Array = ["# engineering", "# reviews", "# incidents", "Direct messages", "Maya", "Sam", "Jordan"] if app == "slack" else (["Overview", "Change requests  1", "Checks", "Activity"] if app == "changes" else ["New chat", "Save favorites", "Recent conversations"])
+	for item: String in links:
+		var button := Button.new()
+		button.text = item
+		button.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		button.custom_minimum_size.y = 39
+		button.add_theme_font_size_override("font_size", 17)
+		button.add_theme_color_override("font_color", side_ink)
+		button.add_theme_color_override("font_hover_color", side_ink)
+		var selected: bool = item == _slack_channel if app == "slack" else item == str(links[0])
+		button.add_theme_stylebox_override("normal", _box(Color(1, 1, 1, 0.09) if selected else Color.TRANSPARENT, 7))
+		button.add_theme_stylebox_override("hover", _box(Color(1, 1, 1, 0.15) if app == "slack" else Color("e0e6e1"), 7))
+		button.pressed.connect(_sidebar_action.bind(app, item))
+		stack.add_child(button)
+	var filler := Control.new()
+	filler.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	stack.add_child(filler)
+	stack.add_child(_label("●  You · available", 14, side_muted))
+
+
+func _sidebar_action(app: String, item: String) -> void:
+	if _feedback:
+		return
+	if app == "slack":
+		show_slack(item)
+	elif app == "ai":
+		_navigate_app("ai")
+	elif item == "Checks":
+		var result: String = "Three checks passed. Favorites save once, guests sign in, and nobody is charged." if bool(_work_flags.get("tested", false)) else "No checks have been recorded yet. Verify favorites, signed-out users, and double-taps before you merge."
+		_read_only_window("changes", "Checks", result)
+	elif item == "Activity":
+		_read_only_window("changes", "CR #104 · Activity", "Current status: " + _cr_status + ".\n\nMaya is the assigned reviewer. Your decisions and review comments stay attached to this change.")
+	else:
+		_navigate_app("changes")
+
+
+func _add_app_heading(title: String) -> void:
+	if _app == "slack":
+		_window_stack.add_child(_label("Messages   /   Small Batch", 15, MUTED))
+	elif _app == "changes":
+		var status := _label("small-batch / coffee-app     •     " + _cr_status, 16, TEAL)
+		_window_stack.add_child(status)
+	else:
+		_window_stack.add_child(_label("BatchGPT   •   Your feature assistant", 15, MUTED))
+	var heading := _label(title, 29, TEXT)
+	heading.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_window_stack.add_child(heading)
+
+
+func _add_message(parent: Control, text: String) -> void:
+	var bubble := _panel(Color("f7f3f8") if _app == "slack" else (Color.WHITE if _app == "changes" else Color("f0f5ee")), 10)
+	var style := _box(Color("f7f3f8") if _app == "slack" else (Color.WHITE if _app == "changes" else Color("f0f5ee")), 10, _line)
+	bubble.add_theme_stylebox_override("panel", style)
+	parent.add_child(bubble)
+	var margin := _margin(15, 13, 15, 13)
+	bubble.add_child(margin)
+	margin.add_child(_body(text))
+
+
+func _minimize_window() -> void:
+	_window.hide()
+	_menu_app.text = "Finder"
+
+
+func _zoom_window() -> void:
+	_zoomed = not _zoomed
+	_window.position = Vector2(28, 45) if _zoomed else Vector2(65, 58)
+	_window.size = Vector2(1384, 658) if _zoomed else Vector2(1310, 638)
+
+
+func show_slack(channel: String = "# engineering") -> void:
+	_slack_channel = channel
 	_unread = 0
 	_refresh_inbox_badge()
 	var body: String = ""
-	for index: int in range(maxi(0, _messages.size() - 3), _messages.size()):
+	var first: int = maxi(0, _messages.size() - 3) if channel == "# engineering" else 0
+	for index: int in range(first, _messages.size()):
 		var message: Dictionary = _messages[index]
+		var sender: String = str(message["sender"])
+		if channel == "# reviews" and not (sender.contains("CR") or sender.contains("reviews")):
+			continue
+		if channel == "# incidents" and not sender.contains("Pager"):
+			continue
+		if channel == "Direct messages" and not sender.contains("Direct message"):
+			continue
+		if channel in ["Maya", "Sam", "Jordan"] and not sender.contains(channel):
+			continue
 		body += "[b]%s[/b]\n%s\n\n" % [message["sender"], message["text"]]
-	_read_only_window("slack", "#engineering  /  Messages", body.strip_edges())
+	_read_only_window("slack", channel, body.strip_edges() if not body.is_empty() else "No new messages here. A rare workplace achievement.")
 
 func show_change_request() -> void:
 	var body: String = "[b]Status: %s[/b]\n\nSave remembers a favorite. Guests sign in. No coffee orders are placed.\n\n" % _cr_status
@@ -445,6 +654,12 @@ func _scroll_content() -> VBoxContainer:
 
 
 func _label(text: String, font_size: int, color: Color) -> Label:
+	if color == TEXT:
+		color = _ink
+	elif color == MUTED:
+		color = _soft
+	elif color == TEAL:
+		color = _accent
 	var label := Label.new()
 	label.text = text
 	label.add_theme_font_size_override("font_size", font_size)
@@ -459,9 +674,9 @@ func _body(text: String) -> RichTextLabel:
 	body.text = text
 	body.fit_content = true
 	body.scroll_active = false
-	body.add_theme_color_override("default_color", TEXT)
-	body.add_theme_font_size_override("normal_font_size", 23)
-	body.add_theme_font_size_override("bold_font_size", 23)
+	body.add_theme_color_override("default_color", _ink)
+	body.add_theme_font_size_override("normal_font_size", 21)
+	body.add_theme_font_size_override("bold_font_size", 21)
 	body.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	return body
 
@@ -469,15 +684,17 @@ func _body(text: String) -> RichTextLabel:
 func _button(text: String, primary: bool = false) -> Button:
 	var button := Button.new()
 	button.text = text
-	button.custom_minimum_size = Vector2(100, 49)
+	button.custom_minimum_size = Vector2(100, 47)
 	button.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	button.add_theme_font_size_override("font_size", 23)
+	button.add_theme_font_size_override("font_size", 21)
 	button.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
-	if primary:
-		button.add_theme_stylebox_override("normal", _box(TEAL, 10))
-		button.add_theme_stylebox_override("hover", _box(TEAL.lightened(0.13), 10))
-		button.add_theme_color_override("font_color", BG)
-		button.add_theme_color_override("font_hover_color", BG)
+	button.add_theme_stylebox_override("normal", _box(_accent if primary else Color.WHITE, 8, _accent if primary else _line))
+	button.add_theme_stylebox_override("hover", _box(_accent.lightened(0.1) if primary else _paper.darkened(0.035), 8, _accent))
+	button.add_theme_stylebox_override("pressed", _box(_accent.darkened(0.08) if primary else _paper.darkened(0.07), 8))
+	button.add_theme_stylebox_override("focus", _box(Color.TRANSPARENT, 8, _accent))
+	button.add_theme_color_override("font_color", Color.WHITE if primary else _ink)
+	button.add_theme_color_override("font_hover_color", Color.WHITE if primary else _ink)
+	button.add_theme_color_override("font_pressed_color", Color.WHITE if primary else _ink)
 	return button
 
 
