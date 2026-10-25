@@ -357,7 +357,7 @@ func show_feedback(text: String, changes: Dictionary = {}) -> void:
 	if _app == "changes" and _stage != "incident":
 		_cr_header(_current_cr())
 	else:
-		_add_app_heading(_slack_channel if _app == "slack" else "BatchGPT replied.")
+		_add_app_heading(_slack_channel if _app == "slack" else ("Incident update." if _app == "changes" else "BatchGPT replied."))
 	var content := _scroll_content()
 	if _app == "slack":
 		_slack_task_thread(content, _last_card)
