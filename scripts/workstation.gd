@@ -47,7 +47,7 @@ var _unread: int = 0
 var _app: String = ""
 var _menu_app: Label
 var _menu_clock: Label
-var _slack_badge: Label
+var _slack_badge: Control
 var _window_title: Label
 var _dock_buttons: Dictionary = {}
 var _dock_dots: Dictionary = {}
@@ -479,8 +479,8 @@ func set_work_state(stage: String, flags: Dictionary, _awaiting_person: String) 
 	_cr_summary.text = "CR #104  /  " + _cr_status
 	_refresh_inbox_badge()
 
-func _red_dot(parent: Control, point: Vector2) -> Label:
-	var dot := Label.new()
+func _red_dot(parent: Control, point: Vector2) -> Panel:
+	var dot := Panel.new()
 	dot.name = "TaskDot"
 	dot.position = point
 	dot.size = Vector2(13, 13)
@@ -489,8 +489,7 @@ func _red_dot(parent: Control, point: Vector2) -> Label:
 	style.content_margin_right = 0
 	style.content_margin_top = 0
 	style.content_margin_bottom = 0
-	dot.add_theme_font_size_override("font_size", 1)
-	dot.add_theme_stylebox_override("normal", style)
+	dot.add_theme_stylebox_override("panel", style)
 	dot.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	parent.add_child(dot)
 	dot.hide()
