@@ -279,6 +279,15 @@ func show_card(card: Dictionary) -> void:
 	_add_app_heading(str(card.get("title", "Your task")))
 	var content := _scroll_content()
 	_add_message(content, str(card.get("body", "")))
+	var decision: String = str(card.get("decision", ""))
+	if not decision.is_empty():
+		var question := _body("[b]" + decision + "[/b]")
+		var question_font := FontVariation.new()
+		question_font.base_font = UIFont
+		question_font.variation_embolden = 0.6
+		question.add_theme_font_override("bold_font", question_font)
+		question.add_theme_color_override("default_color", _accent)
+		content.add_child(question)
 	var choices: Array = card.get("choices", [])
 	_choice_count = choices.size()
 	for index: int in range(choices.size()):
@@ -475,16 +484,30 @@ func _build_app_shell(app: String) -> void:
 	chrome.add_child(titlebar)
 	for index: int in range(3):
 		var light := Button.new()
-		light.custom_minimum_size = Vector2(18, 18)
+		light.custom_minimum_size = Vector2(30, 30)
 		light.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		light.tooltip_text = ["Close this window.", "Minimize this window.", "Zoom this window."][index]
+		light.text = ["×", "−", "+"][index]
+		light.add_theme_font_size_override("font_size", 21)
+		light.add_theme_color_override("font_color", Color("572b30"))
+		light.add_theme_color_override("font_hover_color", Color("572b30"))
+		light.add_theme_color_override("font_pressed_color", Color("572b30"))
+		light.mouse_filter = Control.MOUSE_FILTER_STOP
+		light.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 		var color: Color = [Color("ff6059"), Color("ffbd2e"), Color("28c840")][index]
-		var light_style := _box(color, 10)
-		light_style.content_margin_left = 0
-		light_style.content_margin_right = 0
-		light.add_theme_stylebox_override("normal", light_style)
-		light.add_theme_stylebox_override("hover", _box(color.lightened(0.12), 10))
-		light.pressed.connect(_zoom_window if index == 2 else _minimize_window)
+		for state: String in ["normal", "hover", "pressed", "focus"]:
+			var light_style := _box(color.lightened(0.12) if state == "hover" else color, 15)
+			light_style.content_margin_left = 0
+			light_style.content_margin_right = 0
+			light_style.content_margin_top = 0
+			light_style.content_margin_bottom = 0
+			light.add_theme_stylebox_override(state, light_style)
+		if index == 0:
+			light.pressed.connect(_close_window)
+		elif index == 1:
+			light.pressed.connect(_minimize_window)
+		else:
+			light.pressed.connect(_zoom_window)
 		titlebar.add_child(light)
 	var app_name: String = str({"slack":"Slack", "changes":"Changes", "ai":"BatchGPT"}.get(app, "Workspace"))
 	_window_title = _label(app_name + "   —   Small Batch", 17, Color("57515e"))
@@ -585,6 +608,20 @@ func _add_message(parent: Control, text: String) -> void:
 	var margin := _margin(15, 13, 15, 13)
 	bubble.add_child(margin)
 	margin.add_child(_body(text))
+
+
+func _close_window() -> void:
+	var acknowledge_update: bool = _feedback
+	_card_open = false
+	_feedback = false
+	_choice_count = 0
+	_window.hide()
+	if acknowledge_update:
+		continue_pressed.emit()
+	_window.hide()
+	_menu_app.text = "Finder"
+	for app: String in _dock_dots:
+		_dock_dots[app].hide()
 
 
 func _minimize_window() -> void:
