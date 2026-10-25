@@ -44,6 +44,12 @@ func _run() -> void:
 	_check(game.computer._root.theme.default_font.resource_path == "res://assets/fonts/Inter.ttf", "The physical desktop uses the bundled font")
 	_check(not game.computer._window.visible and game.computer._menu_app.text == "Finder", "Sitting down starts on the macOS-inspired desktop")
 	_check(game.computer._dock_buttons.size() == 6 and game.computer._dock_buttons["changes"].icon is Texture2D, "The dock contains six actual app icons")
+	_check(game.computer._app_unread["ai"] > 0, "A feature assignment creates a BatchGPT notification badge")
+	game._set_stage(1)
+	await _click_monitor_button(game.computer._slack_button)
+	await _click_monitor_button(_find_button(game.computer._window, "Maya"))
+	_check(game.current_card_id == "inbox_mentor" and game.card_on_computer, "Maya DM opens her actionable message directly")
+	game._set_stage(2)
 	await _click_monitor_button(_find_button(game.computer._root, "Open my task."))
 	_check(game.computer._app == "ai" and game.computer._accent == Color("158173"), "The feature opens in BatchGPT's green chat workspace")
 	var default_window_size: Vector2 = game.computer._window.size
@@ -68,6 +74,37 @@ func _run() -> void:
 	for label: Node in game.computer._window.find_children("*", "RichTextLabel", true, false):
 		decision_copy += str(label.text)
 	_check(decision_copy.contains(str(game.current_card["decision"])), "The computer displays the explicit decision question next to the backstory")
+
+	# History and free chat must never advance the assigned work.
+	var browsing_stats: Dictionary = game.stats.duplicate(true)
+	await _click_monitor_button(_find_button(game.computer._window, "New chat"))
+	_check(is_instance_valid(game.computer._chat_input), "New chat has an actual text composer")
+	await _click_monitor_button(game.computer._chat_input)
+	for character: String in "test save 123":
+		var typed := InputEventKey.new()
+		typed.pressed = true
+		typed.unicode = character.unicode_at(0)
+		Input.parse_input_event(typed)
+		await process_frame
+	_check(game.computer._chat_input.text == "test save 123", "Monitor forwards typed letters and numbers into the AI composer")
+	await _click_monitor_button(_find_button(game.computer._window, "Send"))
+	await create_timer(0.6).timeout
+	var chat_index: int = game.computer._active_chat
+	_check(game.computer._chats[chat_index]["messages"].size() == 2, "Typed prompt gets a local assistant response")
+	var first_reply: String = game.computer._chats[chat_index]["last_reply"]
+	game.computer._chat_input.text = "test save 123"
+	await _click_monitor_button(_find_button(game.computer._window, "Send"))
+	await create_timer(0.6).timeout
+	_check(game.computer._chats[chat_index]["last_reply"] != first_reply, "Random replies avoid repeating the last answer")
+	await _click_monitor_button(game.computer._dock_buttons["changes"])
+	await _click_monitor_button(_find_button(game.computer._window, "Open CR #101"))
+	_check(game.computer._selected_cr == 101, "Historical change requests open independently")
+	await _click_monitor_button(_find_button(game.computer._window, "Files changed"))
+	_check(game.computer._cr_tab == "Files changed", "CR files tab opens its own diff")
+	await _click_monitor_button(_find_button(game.computer._window, "Checks"))
+	_check(game.computer._cr_tab == "Checks", "CR checks tab opens its own results")
+	_check(game.stats == browsing_stats and game.stage_index == 2, "Browsing and free chats do not change workday stats")
+	await _click_monitor_button(_find_button(game.computer._root, "Open my task."))
 
 	var before: Dictionary = game.stats.duplicate(true)
 	var options: Array = game.current_card.get("choices", [])
@@ -98,7 +135,7 @@ func _run() -> void:
 	_check(not game.computer._window.visible and game.stats == applied, "X closes a submitted update without applying its effects again")
 	await _click_monitor_button(game.computer._slack_button)
 	_check(game.computer._app == "slack" and game.computer._window.visible, "Closing feedback does not force that old update to reopen when another app is chosen")
-	await _click_monitor_button(_find_button(game.computer._window, "Open my current task."))
+	await _click_monitor_button(_find_button(game.computer._root, "Open my task."))
 	_check(game.stage_index == 2 and game.current_card_id == "push_cr", "After building, the monitor opens a draft CR instead of skipping submission")
 	_check(not bool(game.flags.get("cr_submitted", false)), "Draft CR is not submitted before its Push button is clicked")
 	var leave_draft: Button = _find_button(game.computer._root, "Stand up from my desk.")
@@ -162,8 +199,8 @@ func _run() -> void:
 	var slack_copy: String = ""
 	for label: Node in game.computer._window.find_children("*", "RichTextLabel", true, false):
 		slack_copy += str(label.text)
-	_check(slack_copy.contains("Maya") and slack_copy.contains("two comments"), "Slack shows the received CR-review message in its actual message feed")
-	await _click_monitor_button(_find_button(game.computer._window, "Open my current task."))
+	_check(slack_copy.contains("two comments"), "Slack shows the received CR-review message in its actual message feed")
+	await _click_monitor_button(_find_button(game.computer._root, "Open my task."))
 	_check(game.current_card_id == "review_notice" and game.card_on_computer, "Opening the message leads to actionable review comments on the computer")
 	await _click_monitor_button(_find_button(game.computer._window, "I'll ask Maya in person before I merge anything."))
 	await _click_monitor_button(_find_button(game.computer._window, "Continue working."))
@@ -221,7 +258,7 @@ func _run() -> void:
 	_finish()
 
 
-func _click_monitor_button(button: Button) -> void:
+func _click_monitor_button(button: Control) -> void:
 	if not is_instance_valid(button):
 		_check(false, "Requested monitor button exists")
 		return
