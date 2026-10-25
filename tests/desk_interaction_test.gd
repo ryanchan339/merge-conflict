@@ -52,6 +52,16 @@ func _run() -> void:
 	await _click_monitor_button(_find_button(game.computer._window, "Maya"))
 	_check(game.current_card_id == "inbox_mentor" and game.card_on_computer, "Maya DM opens her actionable message directly")
 	_check(game.computer._dock_badges["slack"].visible, "Reading Maya's DM keeps its task dot until the task is resolved")
+	var draft_stats: Dictionary = game.stats.duplicate(true)
+	var reply_label: String = game.computer._slack_reply_text(1)
+	await _click_monitor_button(_find_button(game.computer._window, reply_label))
+	_check(game.computer._slack_draft.text == reply_label and not game.computer._slack_send.disabled, "Slack suggestions fill a reply composer and enable Send")
+	_check(game.stats == draft_stats and not game.computer._feedback, "Drafting a Slack reply does not submit the task")
+	await _click_monitor_button(game.computer._slack_send)
+	_check(game.computer._messages.back()["sender"].begins_with("You") and game.computer._messages.back()["text"] == reply_label, "Send posts the selected reply into the actual DM history")
+	await _click_monitor_button(_find_button(game.computer._window, "Continue working."))
+	_check(game.current_card_id == "mentor", "Sending the question opens Maya's follow-up in the conversation")
+	game.evidence.clear()
 	game._set_stage(2)
 	_check(not game.computer._dock_badges["slack"].visible and game.computer._thread_has_task("ai", "Save favorites (task)"), "Task dots move to BatchGPT when the assignment changes")
 	await _click_monitor_button(_find_button(game.computer._root, "Open my task."))
@@ -206,6 +216,10 @@ func _run() -> void:
 	_check(slack_copy.contains("two comments"), "Slack shows the received CR-review message in its actual message feed")
 	await _click_monitor_button(_find_button(game.computer._root, "Open my task."))
 	_check(game.current_card_id == "review_notice" and game.card_on_computer, "Opening the message leads to actionable review comments on the computer")
+	var review_copy: String = ""
+	for label: Node in game.computer._window.find_children("*", "Label", true, false):
+		review_copy += str(label.text)
+	_check(review_copy.contains("Original description") and review_copy.contains("Maya requested changes") and review_copy.contains("double"), "The active CR shows the original change and Maya's inline review comments")
 	await _click_monitor_button(_find_button(game.computer._window, "I'll ask Maya in person before I merge anything."))
 	await _click_monitor_button(_find_button(game.computer._window, "Continue working."))
 	_check(not game.seated and game.awaiting_person == "mentor" and game.stage_index == 3, "Choosing to ask stands up and routes the assignment to Maya without advancing")
@@ -215,6 +229,7 @@ func _run() -> void:
 	await _click_monitor_button(_find_button(game.computer._root, "Open my task."))
 	_check(game.current_card_id == "waiting_maya" and not bool(game.flags.get("cr_merged", false)), "Returning early cannot bypass the chosen conversation or merge the CR")
 	await _click_monitor_button(_find_button(game.computer._window, "I'll go talk to Maya now."))
+	await _click_monitor_button(game.computer._slack_send)
 	var maya_found: bool = await _stand_near("mentor", game.office.target_position("mentor"))
 	_check(maya_found, "Maya is physically reachable for the requested review clarification")
 	await _tap(KEY_E)
@@ -266,7 +281,12 @@ func _click_monitor_button(button: Control) -> void:
 	if not is_instance_valid(button):
 		_check(false, "Requested monitor button exists")
 		return
-	await process_frame
+	var ancestor: Node = button.get_parent()
+	while ancestor != null:
+		if ancestor is ScrollContainer:
+			ancestor.ensure_control_visible(button)
+		ancestor = ancestor.get_parent()
+	await _frames(3)
 	var pixel: Vector2 = button.get_global_rect().get_center()
 	var viewport_size: Vector2 = Vector2(game.computer._viewport.size)
 	var quad: QuadMesh = game.office.monitor_surface.mesh as QuadMesh
