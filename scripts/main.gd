@@ -5,6 +5,7 @@ const PlayerController = preload("res://scripts/player.gd")
 const GameHUD = preload("res://scripts/hud.gd")
 const Story = preload("res://content/story.gd")
 const Workstation = preload("res://scripts/workstation.gd")
+const EngineeringCampaign = preload("res://scripts/engineering_campaign.gd")
 const PocketPhone = preload("res://scripts/phone.gd")
 
 const STAGES: Array[String] = ["standup", "mentor", "feature", "review_info", "review", "intern", "manager", "kitchen", "incident", "exit"]
@@ -23,6 +24,7 @@ const OBJECTIVES: Dictionary = {
 	"exit":["Head home", "Your evaluation is at the elevator."]
 }
 
+var campaign = EngineeringCampaign.new()
 var office: Node3D
 var player: CharacterBody3D
 var hud: CanvasLayer
@@ -106,6 +108,7 @@ func _ready() -> void:
 	_build_held_cup()
 	sound = AudioStreamPlayer.new()
 	add_child(sound)
+	campaign.setup(self)
 	_update_hud()
 	_open_card("welcome")
 	if capture_mode:
@@ -126,7 +129,7 @@ func _process(delta: float) -> void:
 		focus_text = "F  ·  Drink coffee"
 	hud.set_focus(focus_text)
 	if stage_index >= 0:
-		var target_id: String = awaiting_person if not awaiting_person.is_empty() else str(STAGE_TARGETS[STAGES[stage_index]])
+		var target_id: String = "mentor" if campaign.waiting_for_maya else (awaiting_person if not awaiting_person.is_empty() else str(STAGE_TARGETS[STAGES[stage_index]]))
 		var target: Vector3 = office.target_position(target_id)
 		hud.set_distance(player.global_position.distance_to(target))
 		hud.minimap.player_position = player.global_position
@@ -178,6 +181,8 @@ func _unhandled_input(event: InputEvent) -> void:
 
 func _interact(id: String) -> void:
 	if hud.is_modal_open() or finished or stage_index < 0 or seated:
+		return
+	if campaign.interact(id):
 		return
 	if id == "intern" and flags.get("promised_sam", false) and not flags.get("kept_promise", false) and not flags.get("broke_promise", false) and stage_index >= 6:
 		_start_conversation("intern")
@@ -245,7 +250,7 @@ func _interact(id: String) -> void:
 
 func _open_card(id: String, is_ambient: bool = false) -> void:
 	current_card_id = id
-	current_card = Story.card(id)
+	current_card = campaign.decorate(Story.card(id), id)
 	if id == "manager":
 		current_card["body"] += "\n\n" + _memory_line("Jordan")
 	ambient = is_ambient
@@ -280,12 +285,18 @@ func _choose(index: int) -> void:
 	var choices: Array = current_card.get("choices", [])
 	if index < 0 or index >= choices.size():
 		return
+	if current_card.get("_lab_action", "") == "schedule":
+		campaign.schedule_action(index)
+		return
+	if current_card.get("_lab_action", "") == "tablet":
+		campaign.tablet_action(index)
+		return
 	var choice: Dictionary = choices[index]
-	if current_card_id == "review" and index == 0 and not flags.get("sandbox_complete", false):
+	if current_card_id == "review" and index == 0 and not flags.get("sandbox_complete", false) and not flags.get("release_held", false):
 		computer.show_sandbox()
 		return
 	if current_card_id == "feature":
-		for key: String in ["checked_member", "checked_guest", "checked_double", "sandbox_complete", "sandbox_patch", "lab_guest_guard", "lab_write_target", "lab_deduplicate"]:
+		for key: String in ["checked_member", "checked_guest", "checked_double", "sandbox_complete", "sandbox_patch", "lab_guest_guard", "lab_write_target", "lab_deduplicate", "lab_strategy"]:
 			flags.erase(key)
 	if current_card_id == "intern" and index == 1:
 		flags["promised_sam"] = true
@@ -360,6 +371,7 @@ func _set_stage(index: int) -> void:
 	work_card_id = ""
 	work_stage_index = -1
 	stage_index = clampi(index, 0, STAGES.size()-1)
+	campaign.stage_changed(stage_index)
 	if stage_index == 3:
 		flags["interruptions_started"] = true
 	if stage_index >= 5 and flags.get("interruptions_started", false) and not flags.get("interruptions_done", false):
@@ -406,6 +418,9 @@ func _update_hud() -> void:
 		hud.set_objective(str(objective[0]), detail)
 		if not awaiting_person.is_empty():
 			hud.set_objective("Talk to Maya" if awaiting_person == "mentor" else "Talk to Sam", "You chose to ask in person.")
+
+	if campaign.waiting_for_maya:
+		hud.set_objective("Ask Maya about the original change", "Check the kitchenette or team calendar.")
 
 func _finish_day() -> void:
 	finished = true
@@ -457,6 +472,7 @@ func _end_conversation() -> void:
 	player.camera.rotation = Vector3.ZERO
 	player.camera.fov = 78.0
 	player.camera_locked = false
+	office.resume_schedule(conversation_id)
 	conversation_id = ""
 	manager_sitting = false
 	held_cup.visible = cup_state in ["held", "held_full"]
@@ -591,6 +607,9 @@ func _desk_app(app: String) -> void:
 	if not seated or seating or phone.is_open():
 		return
 	var stage: String = STAGES[stage_index]
+	if app.begins_with("lab:"):
+		campaign.route(app.trim_prefix("lab:"))
+		return
 	if app == "source":
 		computer.show_source()
 		return
@@ -630,7 +649,7 @@ func _sandbox_action(action: String) -> void:
 		flags["checked_" + action.trim_prefix("pass:")] = true
 	elif action.begins_with("edit:"):
 		var parts: PackedStringArray = action.split(":")
-		flags["lab_" + parts[1]] = parts[2] if parts[1] == "write_target" else parts[2] == "true"
+		flags["lab_" + parts[1]] = parts[2] if parts[1] in ["write_target", "strategy"] else parts[2] == "true"
 		for scenario: String in ["member", "guest", "double"]:
 			flags.erase("checked_" + scenario)
 	elif action == "patch":

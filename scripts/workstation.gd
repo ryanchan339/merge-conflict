@@ -556,12 +556,12 @@ func _red_dot(parent: Control, point: Vector2) -> Panel:
 	return dot
 
 func _thread_has_task(app: String, thread: String) -> bool:
-	return (app == _task_app and thread == _task_thread) or (app == "slack" and thread == "# triage" and _notified.has("interruptions") and not _work_flags.get("interruptions_done", false))
+	return (app == "changes" and thread == "Investigate" and _work_flags.get("investigation_started", false) and not _work_flags.get("investigation_diagnosed", false)) or (app == "changes" and thread == "Release" and _work_flags.get("cr_merged", false) and not _work_flags.get("release_deployed", false)) or (app == _task_app and thread == _task_thread) or (app == "slack" and thread == "# triage" and _notified.has("interruptions") and not _work_flags.get("interruptions_done", false))
 
 func _refresh_inbox_badge() -> void:
 	_app_unread["slack"] = _unread
 	for app: String in _dock_badges:
-		_dock_badges[app].visible = app == _task_app or _thread_has_task(app, "# triage")
+		_dock_badges[app].visible = app == _task_app or _thread_has_task(app, "# triage") or _thread_has_task(app, "Investigate") or _thread_has_task(app, "Release")
 		_desktop_badges[app].visible = _dock_badges[app].visible
 	_slack_button.tooltip_text = "Open Slack. %d unread messages." % _unread
 
@@ -598,6 +598,13 @@ func _build_notifications() -> void:
 	_notification_timer.wait_time = 7.0
 	_notification_timer.timeout.connect(func() -> void: _notification_button.hide())
 	add_child(_notification_timer)
+
+func record_sent_message(person: String, text: String) -> void:
+	_messages.append({"sender":"You · " + person, "time":"Today " + _menu_clock.text.right(5), "text":text})
+
+func post_office_message(sender: String, message: String) -> void:
+	_messages.append({"sender":sender + " · Direct message", "time":"Today " + _menu_clock.text.right(5), "text":message})
+	_notify("slack", sender, message)
 
 func _notify(app: String, title: String, message: String) -> void:
 	_notification_app = app
@@ -727,7 +734,7 @@ func _build_sidebar(parent: Control, app: String) -> void:
 	var margin := _margin(15, 22, 15, 18)
 	parent.add_child(margin)
 	var stack := VBoxContainer.new()
-	stack.add_theme_constant_override("separation", 9)
+	stack.add_theme_constant_override("separation", 5 if app == "changes" else 9)
 	margin.add_child(stack)
 	var side_ink: Color = Color("f5eaf7") if app == "slack" else _ink
 	var side_muted: Color = Color("bc9bbf") if app == "slack" else _soft
@@ -736,12 +743,12 @@ func _build_sidebar(parent: Control, app: String) -> void:
 	var spacer := Control.new()
 	spacer.custom_minimum_size.y = 17
 	stack.add_child(spacer)
-	var links: Array = ["# engineering", "# reviews", "# incidents", "# triage", "Direct messages", "Maya", "Sam", "Jordan"] if app == "slack" else (["Change requests  5", "CR #104", "Source code", "Test runner", "App preview", "Checks"] if app == "changes" else ["New chat", "Save favorites"] + _chat_titles())
+	var links: Array = ["# engineering", "# reviews", "# incidents", "# triage", "Direct messages", "Maya", "Sam", "Jordan"] if app == "slack" else (["Investigate", "CR #104", "Source code", "Test runner", "Debugger", "Release", "Calendar", "App preview", "Change requests  5", "Checks"] if app == "changes" else ["New chat", "Save favorites"] + _chat_titles())
 	for item: String in links:
 		var button := Button.new()
 		button.text = item
 		button.alignment = HORIZONTAL_ALIGNMENT_LEFT
-		button.custom_minimum_size.y = 39
+		button.custom_minimum_size.y = 31 if app == "changes" else 39
 		button.add_theme_font_size_override("font_size", 17)
 		button.add_theme_color_override("font_color", side_ink)
 		button.add_theme_color_override("font_hover_color", side_ink)
@@ -773,6 +780,8 @@ func _sidebar_action(app: String, item: String) -> void:
 				if _chats[index]["title"] == item:
 					show_ai_chat(index)
 					break
+	elif item in ["Investigate", "Debugger", "Release", "Calendar"]:
+		app_requested.emit("lab:" + str({"Investigate":"investigation", "Debugger":"debugger", "Release":"release", "Calendar":"calendar"}[item]))
 	elif item == "Source code":
 		show_source()
 	elif item == "Test runner":

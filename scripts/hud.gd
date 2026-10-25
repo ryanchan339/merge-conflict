@@ -282,8 +282,13 @@ func show_card(card: Dictionary) -> void:
 		var choice: Dictionary = choices[index]
 		var button := _button("%d  %s" % [index + 1, str(choice.get("label", "Continue."))])
 		button.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		if card.get("_lab_action", "") == "tablet":
+			button.custom_minimum_size.y = 36
 		button.pressed.connect(_emit_choice.bind(index))
-		content.add_child(button)
+		if card.get("_lab_action", "") == "tablet" and index == choices.size() - 1:
+			_stack.add_child(button)
+		else:
+			content.add_child(button)
 
 
 func show_feedback(text: String, changes: Dictionary = {}) -> void:

@@ -49,6 +49,15 @@ var _watering_can: Node3D
 var _plant_stream: MeshInstance3D
 var _plant_tween: Tween
 var _plant_leaves: Array[MeshInstance3D] = []
+var _tablet_label: Label3D
+var _tablet_light: MeshInstance3D
+var _schedule_stage: int = -1
+var _schedule_rows: Array[Dictionary] = []
+var _schedule_tweens: Dictionary = {}
+var _schedule_places: Dictionary = {}
+var _schedule_paused: Dictionary = {}
+var _schedule_roots: Dictionary = {}
+var _schedule_homes: Dictionary = {}
 const CUP_COUNTER := Vector3(-12.06, 1.14, 3.2)
 const CUP_MACHINE := Vector3(-11.99, 1.2, 4.7)
 
@@ -66,6 +75,8 @@ func _ready() -> void:
 	_build_hr_corner()
 	_build_vending_machine()
 	_build_water_cooler()
+	_build_coffee_tablet()
+	_setup_schedules()
 
 
 func target_position(id: String) -> Vector3:
@@ -85,10 +96,169 @@ func face_person(id: String, viewer: Vector3) -> void:
 	if not people.has(id):
 		return
 	var person: Node3D = people[id]
+	# A conversation pauses a commute so the person never walks away mid-sentence.
+	if _schedule_tweens.has(id):
+		_schedule_paused[id] = true
+		var route: Tween = _schedule_tweens[id]
+		if is_instance_valid(route):
+			route.kill()
+		_schedule_tweens.erase(id)
+		person.position.y = 0.0
+		_update_person_marker(id)
 	var toward: Vector3 = viewer - person.global_position
 	if toward.length_squared() > 0.01:
 		var target_angle: float = atan2(toward.x, toward.z)
 		create_tween().tween_property(person, "global_rotation:y", target_angle, 0.28)
+
+
+func _build_coffee_tablet() -> void:
+	var tablet := _target(self, "coffee_tablet", "Use the office coffee tablet.", Vector3(-12.0, 0.0, 5.65), Vector3(-11.94, 1.48, 5.65))
+	_box(tablet, "Tablet stand", Vector3(-0.15, 1.11, 0), Vector3(0.24, 0.20, 0.25), "metal")
+	_box(tablet, "Tablet frame", Vector3(0, 1.48, 0), Vector3(0.075, 0.64, 0.94), "navy", true)
+	_box(tablet, "Tablet display", Vector3(0.043, 1.48, 0), Vector3(0.012, 0.55, 0.84), "screen")
+	_tablet_label = _sign(tablet, "", Vector3(0.053, 1.49, 0), 90.0, 0.00082, Color("edf4ec"))
+	_tablet_light = _box(tablet, "Tablet release indicator", Vector3(0.054, 1.205, 0), Vector3(0.01, 0.025, 0.22), "screen_line")
+	_interaction_box(tablet, Vector3(0.047, 1.48, 0), Vector3(0.07, 0.62, 0.94))
+	set_tablet_state(0, 0, "Production · v1")
+
+
+func set_tablet_state(favorites: int, orders: int, status: String) -> void:
+	if not is_instance_valid(_tablet_label):
+		return
+	var release: String = status.replace("\n", " ").strip_edges().left(25)
+	_tablet_label.text = "SMALL BATCH\nFavorites: %d\nOrders: %d\n%s" % [favorites, orders, release]
+	_tablet_light.material_override = _materials["screen_coral"] if orders > 0 else _materials["screen_line"]
+	_set_target_label("coffee_tablet", "Use the office coffee tablet.")
+
+
+func _setup_schedules() -> void:
+	for id: String in ["mentor", "intern", "manager"]:
+		var actor: Node3D = people[id]
+		var actor_root: Node3D = actor.get_parent() as Node3D
+		_schedule_roots[id] = actor_root
+		_schedule_homes[id] = actor_root.global_position
+		_schedule_places[id] = "desk"
+	set_work_clock(0)
+
+
+func set_work_clock(stage_index: int) -> void:
+	if stage_index == _schedule_stage or _schedule_roots.is_empty():
+		return
+	_schedule_stage = stage_index
+	var maya_coffee: bool = stage_index in [2, 3, 7]
+	var sam_rehearsing: bool = stage_index in [3, 4]
+	_schedule_rows = [
+		{"id":"mentor", "person":"Maya", "location":"Kitchenette" if maya_coffee else "Maya's desk", "status":"Coffee break · quick questions welcome" if maya_coffee else ("Reviewing changes" if stage_index == 6 else "Available for questions"), "available":stage_index != 6},
+		{"id":"intern", "person":"Sam", "location":"Standup corner" if sam_rehearsing else "Sam's desk", "status":"Rehearsing the demo · leave a message" if sam_rehearsing else "Available at the desk", "available":not sam_rehearsing},
+		{"id":"manager", "person":"Jordan", "location":"Manager's office", "status":"Your 1:1" if stage_index == 6 else ("Planning meeting · calendar busy" if stage_index in [2, 3, 4] else "Scheduled work · message first"), "available":stage_index == 6}
+	]
+	_schedule_person("mentor", "coffee" if maya_coffee else "desk", [Vector3(-5.4, 0, -0.15), Vector3(-5.8, 0, 2.2), Vector3(-6.15, 0, 7.6), Vector3(-7.3, 0, 7.6)])
+	_schedule_person("intern", "rehearsal" if sam_rehearsing else "desk", [Vector3(10.15, 0, -1.1), Vector3(11.2, 0, -1.1), Vector3(11.2, 0, -6.1)])
+
+
+func person_available(id: String) -> bool:
+	for row: Dictionary in _schedule_rows:
+		if str(row["id"]) == id:
+			return bool(row["available"])
+	return true
+
+
+func schedule_status() -> Array[Dictionary]:
+	var rows: Array[Dictionary] = []
+	for entry: Dictionary in _schedule_rows:
+		var row: Dictionary = entry.duplicate()
+		var id: String = str(row["id"])
+		if _schedule_paused.has(id):
+			row["location"] = "On the way to " + str(row["location"]).to_lower()
+			row["status"] = "Stopped for a conversation"
+		elif _schedule_tweens.has(id):
+			row["status"] = "Walking to " + str(row["location"]).to_lower() + " · can stop to talk"
+		rows.append(row)
+	return rows
+
+
+func resume_schedule(id: String) -> void:
+	if not _schedule_paused.has(id):
+		return
+	_schedule_paused.erase(id)
+	_schedule_places[id] = "paused"
+	var current_clock: int = _schedule_stage
+	_schedule_stage = -99
+	set_work_clock(current_clock)
+
+
+func _schedule_person(id: String, place: String, corridor: Array[Vector3]) -> void:
+	if str(_schedule_places.get(id, "desk")) == place:
+		return
+	_schedule_places[id] = place
+	_schedule_paused.erase(id)
+	if _schedule_tweens.has(id):
+		var previous: Tween = _schedule_tweens[id]
+		if is_instance_valid(previous):
+			previous.kill()
+	var actor_root: Node3D = _schedule_roots[id]
+	var nearest: int = 0
+	var best: float = INF
+	for index: int in corridor.size():
+		var distance: float = actor_root.global_position.distance_squared_to(corridor[index])
+		if distance < best:
+			nearest = index
+			best = distance
+	var route: Array[Vector3] = []
+	if actor_root.global_position.distance_to(corridor[nearest]) > 0.08:
+		route.append(corridor[nearest])
+	if place == "desk":
+		for index: int in range(nearest - 1, -1, -1):
+			route.append(corridor[index])
+	else:
+		for index: int in range(nearest + 1, corridor.size()):
+			route.append(corridor[index])
+	if route.is_empty():
+		_update_person_marker(id)
+		return
+	var total: float = 0.0
+	var start: Vector3 = actor_root.global_position
+	for point: Vector3 in route:
+		total += start.distance_to(point)
+		start = point
+	var tween := create_tween()
+	_schedule_tweens[id] = tween
+	start = actor_root.global_position
+	# The office clock jumps between appointments; this brief, bounded transition
+	# makes the move visible without keeping a required conversation in transit.
+	for point: Vector3 in route:
+		var direction: Vector3 = point - start
+		var leg_duration: float = maxf(0.07, 1.8 * direction.length() / maxf(total, 0.01))
+		tween.tween_callback(_face_route.bind(id, direction))
+		tween.tween_method(_move_person.bind(id), start, point, leg_duration)
+		start = point
+	tween.tween_callback(_finish_route.bind(id))
+
+
+func _face_route(id: String, direction: Vector3) -> void:
+	var person: Node3D = people[id]
+	if direction.length_squared() > 0.001:
+		person.rotation.y = atan2(direction.x, direction.z)
+
+
+func _move_person(position: Vector3, id: String) -> void:
+	var actor_root: Node3D = _schedule_roots[id]
+	actor_root.global_position = position
+	var person: Node3D = people[id]
+	person.position.y = sin((position.x + position.z) * 9.0) * 0.012
+	_update_person_marker(id)
+
+
+func _finish_route(id: String) -> void:
+	_schedule_tweens.erase(id)
+	var person: Node3D = people[id]
+	person.position.y = 0.0
+	_update_person_marker(id)
+
+
+func _update_person_marker(id: String) -> void:
+	var person: Node3D = people[id]
+	interaction_positions[id] = person.global_position + Vector3.UP * (1.29 if id == "manager" else 1.5)
 
 func _build_hr_corner() -> void:
 	_desk(self, "People Operations desk", Vector3(1.15, 0, -10.65), 180.0, false)
